@@ -6,4 +6,5 @@ def kalshi_setup():
 def test_kalshi():
     kalshi = Kalshi()
     available_markets = kalshi.get_markets()
+    balance = kalshi.get_account_balance()
     stop = 1

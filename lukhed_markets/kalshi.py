@@ -5,35 +5,78 @@ from lukhed_basic_utils import timeCommon as tC
 from lukhed_basic_utils import listWorkCommon as lC
 from lukhed_basic_utils.githubCommon import KeyManager
 from typing import Optional
+import base64
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.backends import default_backend
+import datetime
 
 class Kalshi:
-    def __init__(self, elections_mode=False, demo_mode=False, api_delay=True, key_management='github', 
-                 kalshi_setup=False):
+    def __init__(self, api_delay=True, kalshi_setup=False):
         
         # API
-        self.key_management = key_management.lower()
         self.delay = 0.5 if api_delay else 0
+        self.base_url = 'https://api.elections.kalshi.com'
 
         # Setup
         if kalshi_setup:
             self._kalshi_api_setup()
 
+
         # Access Data
         self.kM = None                              # type: Optional[KeyManager]
-        self._private_key = None
-        self._pass = None
-        self._email = None
-        self.key_management = key_management.lower()
         self._token_file_path = osC.create_file_path_string(['lukhedConfig', 'localTokenFile.json'])
+        self._private_key_path = None
+        self._key = None
+        self._private_key = None
         self._check_create_km()
 
         self._check_exchange_status()
-
 
     def _call_kalshi_non_auth(self, url, params=None):
         tC.sleep(self.delay)
         return rC.request_json(url, params=params)
     
+    def _sign_pss_text(self, text: str) -> str:
+        message = text.encode('utf-8')
+        
+        try:
+            signature = self._private_key.sign(
+                message,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.DIGEST_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            return base64.b64encode(signature).decode('utf-8')
+        except InvalidSignature as e:
+            raise ValueError("RSA sign PSS failed") from e
+
+    def _call_kalshi_auth(self, method: str, path: str, params=None):
+        tC.sleep(self.delay)
+        
+        # Get current timestamp in milliseconds
+        timestamp = int(datetime.datetime.now().timestamp() * 1000)
+        timestamp_str = str(timestamp)
+        
+        # Create message string and sign it
+        msg_string = timestamp_str + method + path
+        sig = self._sign_pss_text(msg_string)
+        
+        # Prepare headers
+        headers = {
+            'KALSHI-ACCESS-KEY': self._key,
+            'KALSHI-ACCESS-SIGNATURE': sig,
+            'KALSHI-ACCESS-TIMESTAMP': timestamp_str
+        }
+        
+        # Make request
+        url = self.base_url + path
+        
+        return rC.request_json(url, headers=headers, params=params)
+
     def _check_exchange_status(self):
         url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/status'
         r = self._call_kalshi_non_auth(url)
@@ -42,28 +85,32 @@ class Kalshi:
     def _check_create_km(self):
         if self.kM is None:
             # get the key data previously setup
-            self.kM = KeyManager('kalshiApi', config_file_preference=self.key_management)
-            self._private_key = self.kM.key_data['privateKey']
-            self._pass = self.kM.key_data['password']
-            self._email = self.kM.key_data['email']
+            self.kM = KeyManager('kalshiApi', config_file_preference='local')
+            self._key = self.kM.key_data['key']
+            self._private_key_path = self.kM.key_data['privateKeyPath']
+            
+            with open(self._private_key_path, "rb") as key_file:
+                self._private_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=None,  # or provide a password if your key is encrypted
+                    backend=default_backend()
+                )
 
     def _build_key_file(self):
         full_key_data = {
-            "privateKey": self._private_key,
-            "email": self._email,   
-            "password": self._pass
+            "key": self._key,
+            "privateKeyPath": self._private_key_path,
         }
         return full_key_data
-
+    
     def _kalshi_api_setup(self):
         print("This is the lukhed setup for Kalshi API wrapper.\nIf you haven't already, you first need to setup a"
-              " Kalshi account (free) and generate api keys.\nThis wrapper utilizes the official kalshi python package"
-              " to authenticate via email and account password.\nYour data for authentication is stored locally or on "
-              "your own private github account depending on your instantiation method.\n\n"
+              " Kalshi account (free) and generate api keys.\nThe data you provide in this setup will be stored on "
+              "your local device.\n\n"
               "To continue, you need the following from Kalshi:\n"
-                "1. Private key\n"
-                "2. Account Email\n"
-                "3. Account Password\n"
+                "1. Key identifier (can be found on your key page here: https://kalshi.com/account/profile)\n"
+                "2. Private key file downloaded from Kalshi upon creation of key\n"
+                
                 "If you don't know how to get these, you can find instructions here:\n"
                 "https://trading-api.readme.io/reference/api-keys")
             
@@ -71,19 +118,19 @@ class Kalshi:
             print("OK, come back when you have setup your developer account")
             quit()
 
-        self._private_key = input("Paste just the private key content from your kalshi key file:\n").replace(" ", "")
-        self._email = input("Paste your account email here:\n").replace(" ", "")
-        self._pass = input("Paste your account password here:\n").replace(" ", "")
-
-        # write the new token to github
-        tC.sleep(1)
+        self._key = input("Paste your key identifier here (found in Kalshi API keys secion "
+                          "https://kalshi.com/account/profile):\n").replace(" ", "")
+        key_fn = input("Write the name of your private key file downloaded from kalshi upon key creation"
+                       " here (e.g., key.txt):\n")
+        self._private_key_path = osC.create_file_path_string(['lukhedConfig', key_fn])
         key_data = self._build_key_file()
+        tC.sleep(1)
+        self.kM = KeyManager('kalshiApi', config_file_preference='local', provide_key_data=key_data, force_setup=True)
+        input(f"\n\nFINAL STEP: Copy your private key file here: {self._private_key_path}\n\n"
+              "Press enter when you are ready to continue")
 
         print("\n\nThe Kalshi portion is complete! Now setting up key management with lukhed library...")
-        self.kM = KeyManager('kalshiApi', config_file_preference=self.key_management, 
-                            provide_key_data=key_data)
-
-
+        
     @staticmethod
     def calculate_bet_yes_no_trade(trade_data):
         side_take = trade_data['taker_side']
@@ -114,3 +161,8 @@ class Kalshi:
                 }
                 final_data.append(pretty_dict)
             return final_data
+        
+    def get_account_balance(self):
+        path = '/trade-api/v2/portfolio/balance'
+        r = self._call_kalshi_auth('GET', path, params=None)
+        return r
