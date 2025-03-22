@@ -10,6 +10,23 @@ def test_kalshi():
     stop = 1
 
 def march_madness_get_team_odds(round=64, status='open', tourney_year=25):
+    """
+    Get the odds for all teams in a given round of the March Madness tournament.
+
+    Parameters
+    ----------
+    round : int, optional
+        Rounds are described by kalshi has how many teams are left. Round of 64 is first round games, by default 64.
+    status : str, optional
+        Status of the market (unopened, open, closed, settled), by default 'open'
+    tourney_year : int, optional
+        Year of the tourney, by default 25 (2025)
+
+    Returns
+    -------
+    list
+        List of dictionaries with the team, probability, volume, volume_24h, and open_interest.
+    """
     kalshi = Kalshi()
     all_events = kalshi.get_all_available_events(series_ticker='KXMARMAD', 
                                                  with_nested_markets=True,
