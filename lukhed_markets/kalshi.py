@@ -1,5 +1,4 @@
 from lukhed_basic_utils import osCommon as osC
-from lukhed_basic_utils import fileCommon as fC
 from lukhed_basic_utils import requestsCommon as rC
 from lukhed_basic_utils import timeCommon as tC
 from lukhed_basic_utils import listWorkCommon as lC
@@ -7,7 +6,7 @@ from lukhed_basic_utils.githubCommon import KeyManager
 from typing import Optional
 import base64
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
 import datetime
