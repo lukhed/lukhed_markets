@@ -151,6 +151,12 @@ class Kalshi:
 
         print("\n\nThe Kalshi portion is complete! Now setting up key management with lukhed library...")
         
+    def _parse_active_only_markets(self, markets, active_only):
+        if active_only:
+            return [x for x in markets if x['status'] == 'active']
+        else:
+            return markets
+    
     @staticmethod
     def calculate_bet_yes_no_trade(trade_data):
         side_take = trade_data['taker_side']
@@ -163,9 +169,52 @@ class Kalshi:
     #################################
     # Naive Wrapper Functions
     #################################
-    def get_markets(self, return_raw_data=False):
+    def get_markets(self, limit=100, cursor=None, event_ticker=None, series_ticker=None, max_close_ts=None, min_close_ts=None, status=None, tickers=None, return_raw_data=False):
+        """
+        Endpoint for getting data about all markets
+        https://trading-api.readme.io/reference/getmarkets-1
+
+        Parameters
+        ----------
+        limit : int, optional
+            1 to 1000, Parameter to specify the number of results per page. Defaults to 100.
+        cursor : str, optional
+            The Cursor represents a pointer to the next page of records in the pagination. So this optional parameter, 
+            when filled, should be filled with the cursor string returned in a previous request to this end-point.
+            Filling this would basically tell the api to get the next page containing the number of records passed on 
+            the limit parameter. On the other side not filling it tells the api you want to get the first page 
+            for another query. The cursor does not store any filters, so if any filter parameters like tickers, max_ts 
+            or min_ts were passed in the original query they must be passed again.
+        event_ticker : str, optional
+            Event ticker to retrieve markets for.
+        series_ticker : str, optional
+            Series ticker to retrieve contracts for.
+        max_close_ts : int, optional
+            Restricts the markets to those that are closing in or before this timestamp.
+        min_close_ts : int, optional
+            Restricts the markets to those that are closing in or after this timestamp.
+        status : str, optional
+            Restricts the markets to those with certain statuses, as a comma separated list. The following values are 
+            accepted: unopened, open, closed, settled.
+        tickers : str, optional
+            Restricts the markets to those with certain tickers, as a comma separated list.
+        return_raw_data : bool, optional
+            If True, return the raw data from the API. Defaults to False.
+        """
+
         url = 'https://api.elections.kalshi.com/trade-api/v2/markets'
-        r = self._call_kalshi_non_auth(url, params={'limit': 1000})
+        params = {
+            'limit': limit,
+            'cursor': cursor,
+            'event_ticker': event_ticker,
+            'series_ticker': series_ticker,
+            'max_close_ts': max_close_ts,
+            'min_close_ts': min_close_ts,
+            'status': status,
+            'tickers': tickers
+        }
+
+        r = self._call_kalshi_non_auth(url, params=params)
         if return_raw_data:
             return r
         else:
@@ -185,6 +234,25 @@ class Kalshi:
                 final_data.append(pretty_dict)
             return final_data
         
+    def get_market(self, ticker):
+        """
+        Endpoint for getting data about a specific market
+        https://trading-api.readme.io/reference/getmarket-1
+
+        Parameters
+        ----------
+        ticker : str
+            Market ticker for the market being retrieved.
+        
+        Returns
+        -------
+        dict
+            Data about the specific market
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}'
+        r = self._call_kalshi_non_auth(url)
+        return r
+
     def get_events(self, limit=100 ,cursor=None, status=None, series_ticker=None, with_nested_markets=False):
         """
         Endpoint for getting data about all events
@@ -223,7 +291,31 @@ class Kalshi:
         r = self._call_kalshi_non_auth(url, params=params)
         return r
     
-    
+    def get_event(self, event_ticker, with_nested_markets=False):
+        """
+        Endpoint for getting data about an event by its ticker
+        https://trading-api.readme.io/reference/getevent-1
+
+        Parameters
+        ----------
+        event_ticker : str
+            Should be filled with the ticker of the event.
+        with_nested_markets : bool, optional
+            If the markets belonging to the events should be added in the response as a nested field in this event. 
+            Defaults to False.
+        
+        Returns
+        -------
+        dict
+            Data about the specific event
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/events/{event_ticker}'
+        params = {
+            'with_nested_markets': with_nested_markets
+        }
+        r = self._call_kalshi_non_auth(url, params=params)
+        return r
+
     #################################
     # Custom Wrapper Functions
     #################################
@@ -280,7 +372,33 @@ class Kalshi:
         
         return all_events
 
+    #################################
+    # Crypto
+    #################################
+    def get_bitcoin_yearly_high_markets(self, active_only=False):
+        """
+        Get all bitcoin yearly high markets.
 
+        Parameters
+        ----------
+        active_only : bool, optional
+            Only return active markets, by default False
+
+        Returns
+        -------
+        list
+            List of bitcoin yearly high markets.
+        """
+        event = f'KXBTCMAXY-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}'
+        event_data = self.get_event(event, with_nested_markets=True)
+
+        try:
+            return event_data['error']
+        except KeyError:
+            pass
+
+        markets = event_data['event']['markets']
+        return self._parse_active_only_markets(markets, active_only)
         
     def get_account_balance(self):
         path = '/trade-api/v2/portfolio/balance'
