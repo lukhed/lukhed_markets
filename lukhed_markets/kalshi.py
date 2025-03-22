@@ -13,10 +13,12 @@ from cryptography.hazmat.backends import default_backend
 import datetime
 
 class Kalshi:
-    def __init__(self, api_delay=True, kalshi_setup=False):
+    def __init__(self, api_delay='basic', kalshi_setup=False):
         
-        # API
-        self.delay = 0.5 if api_delay else 0
+        
+        self.read_delay = None
+        self.write_delay = None
+        self._set_api_delays(api_delay)
         self.base_url = 'https://api.elections.kalshi.com'
 
         # Setup
@@ -34,8 +36,27 @@ class Kalshi:
 
         self._check_exchange_status()
 
+    def _set_api_delays(self, plan):
+        plan = plan.lower()
+        # API Rate Limits
+        if plan == 'basic':
+            self.read_delay = 0.1    # 10 requests per second
+            self.write_delay = 0.2   # 5 requests per second
+        elif plan == 'advanced':
+            self.read_delay = 0.033  # 30 requests per second
+            self.write_delay = 0.033 # 30 requests per second
+        elif plan == 'premier':
+            self.read_delay = 0.01   # 100 requests per second
+            self.write_delay = 0.01  # 100 requests per second
+        elif plan == 'prime':
+            self.read_delay = 0.01   # 100 requests per second
+            self.write_delay = 0.0025 # 400 requests per second
+        else:
+            self.read_delay = 0.1    # default to basic tier
+            self.write_delay = 0.2   # default to basic tier
+    
     def _call_kalshi_non_auth(self, url, params=None):
-        tC.sleep(self.delay)
+        tC.sleep(self.read_delay)
         return rC.request_json(url, params=params)
     
     def _sign_pss_text(self, text: str) -> str:
@@ -55,7 +76,7 @@ class Kalshi:
             raise ValueError("RSA sign PSS failed") from e
 
     def _call_kalshi_auth(self, method: str, path: str, params=None):
-        tC.sleep(self.delay)
+        tC.sleep(self.read_delay)
         
         # Get current timestamp in milliseconds
         timestamp = int(datetime.datetime.now().timestamp() * 1000)
@@ -139,7 +160,10 @@ class Kalshi:
 
         bet = contracts * price
         return bet
-
+    
+    #################################
+    # Naive Wrapper Functions
+    #################################
     def get_markets(self, return_raw_data=False):
         url = 'https://api.elections.kalshi.com/trade-api/v2/markets'
         r = self._call_kalshi_non_auth(url, params={'limit': 1000})
@@ -161,6 +185,99 @@ class Kalshi:
                 }
                 final_data.append(pretty_dict)
             return final_data
+        
+    def get_events(self, limit=100 ,cursor=None, status=None, series_ticker=None, with_nested_markets=False):
+        """
+        Endpoint for getting data about all events
+        https://trading-api.readme.io/reference/getevents-1
+
+        Parameters
+        ----------
+        limit : int, optional
+            1 to 200, Parameter to specify the number of results per page. Defaults to 100.
+        cursor : str, optional
+            The Cursor represents a pointer to the next page of records in the pagination. So this optional parameter, 
+            when filled, should be filled with the cursor string returned in a previous request to this end-point.
+            Filling this would basically tell the api to get the next page containing the number of records passed on 
+            the limit parameter. On the other side not filling it tells the api you want to get the first page 
+            for another query. The cursor does not store any filters, so if any filter parameters like series_ticker 
+            was passed in the original query they must be passed again.
+        status : str, optional
+            Restricts the events to those with certain statuses, as a comma separated list. The following values are 
+            accepted: unopened, open, closed, settled.
+        series_ticker : str, optional
+            Series ticker to retrieve contracts for, by default None
+        with_nested_markets : bool, optional
+            If the markets belonging to the events should be added in the response as a nested field in this event. 
+            by default False
+        """
+
+        url = "https://api.elections.kalshi.com/trade-api/v2/events"
+        params = {
+            'limit': limit,
+            'cursor': cursor,
+            'status': status,
+            'series_ticker': series_ticker,
+            'with_nested_markets': with_nested_markets
+        }
+
+        r = self._call_kalshi_non_auth(url, params=params)
+        return r
+    
+    
+    #################################
+    # Custom Wrapper Functions
+    #################################
+    def get_all_available_events(self, status=None, series_ticker=None, with_nested_markets=False):
+        """
+        Get all available Kalshi events by handling pagination automatically.
+        
+        Parameters
+        ----------
+        status : str, optional
+            Filter events by status (unopened, open, closed, settled)
+        series_ticker : str, optional
+            Series ticker to retrieve contracts for
+        with_nested_markets : bool, optional
+            Include nested markets in response
+            
+        Returns
+        -------
+        list
+            List of all available events
+        """
+        all_events = []
+        cursor = None
+        limit = 200  # Maximum allowed by API
+        
+        while True:
+            # Get batch of events
+            response = self.get_events(
+                limit=limit,
+                cursor=cursor,
+                status=status,
+                series_ticker=series_ticker,
+                with_nested_markets=with_nested_markets
+            )
+            
+            # Add events to master list
+            if 'events' in response:
+                all_events.extend(response['events'])
+            
+            # Check if there are more events to fetch
+            if 'cursor' not in response or not response['cursor']:
+                break
+            
+            print('collecting 200 more events...')
+            cursor = response['cursor']
+            sanity_check = lC.return_unique_values([event['event_ticker'] for event in all_events])
+            if len(sanity_check) != len(all_events):
+                print('Duplicate tickers found in all_events!')
+                break
+        
+        return all_events
+
+
         
     def get_account_balance(self):
         path = '/trade-api/v2/portfolio/balance'
