@@ -316,6 +316,38 @@ class Kalshi:
         r = self._call_kalshi_non_auth(url, params=params)
         return r
 
+    def get_series(self, series_ticker):
+        """
+        Endpoint for getting data about a series by its ticker
+        https://trading-api.readme.io/reference/getseries-1
+
+        Parameters
+        ----------
+        series_ticker : str
+            Should be filled with the ticker of the series.
+        
+        Returns
+        -------
+        dict
+            Data about the specific series
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/series/{series_ticker}'
+        r = self._call_kalshi_non_auth(url)
+        return r
+
+    def get_account_balance(self):
+        """
+        Get the account balance.
+
+        Returns
+        -------
+        dict
+            Account balance data.
+        """
+        path = '/trade-api/v2/portfolio/balance'
+        r = self._call_kalshi_auth('GET', path, params=None)
+        return r
+    
     #################################
     # Custom Wrapper Functions
     #################################
@@ -373,9 +405,22 @@ class Kalshi:
         return all_events
 
     #################################
-    # Stocks
+    # Custom Stocks
     #################################
     def get_sp500_year_end_range_markets(self, active_only=False):
+        """
+        Get all SP500 year end range markets.
+
+        Parameters
+        ----------
+        active_only : bool, optional
+            Only return active markets, by default False
+
+        Returns
+        -------
+        list
+            List of SP500 year end range markets.
+        """
         event = f'KXINXY-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}DEC31'
         event_data = self.get_event(event, with_nested_markets=True)
 
@@ -388,6 +433,19 @@ class Kalshi:
         return self._parse_active_only_markets(markets, active_only)
     
     def get_nasdaq_year_end_range_markets(self, active_only=False):
+        """
+        Get all NASDAQ year end range markets.
+
+        Parameters
+        ----------
+        active_only : bool, optional
+            Only return active markets, by default False
+
+        Returns
+        -------
+        list
+            List of NASDAQ year end range markets.
+        """
         event = f'KXNASDAQ100Y-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}DEC31'
         event_data = self.get_event(event, with_nested_markets=True)
 
@@ -401,7 +459,7 @@ class Kalshi:
         
     
     #################################
-    # Crypto
+    # Custom Crypto
     #################################
     def get_bitcoin_yearly_high_markets(self, active_only=False):
         """
@@ -430,10 +488,6 @@ class Kalshi:
         
     
     #################################
-    # Account Info
+    # Custom Account Info
     #################################
-    def get_account_balance(self):
-        path = '/trade-api/v2/portfolio/balance'
-        r = self._call_kalshi_auth('GET', path, params=None)
-        return r
     
