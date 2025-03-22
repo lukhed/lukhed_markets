@@ -228,14 +228,15 @@ class Kalshi:
     #################################
     # Custom Wrapper Functions
     #################################
-    def get_all_available_events(self, status=None, series_ticker=None, with_nested_markets=False):
+    def get_all_available_events(self, status='open', series_ticker=None, with_nested_markets=False, 
+                                 sub_title_filter=None):
         """
         Get all available Kalshi events by handling pagination automatically.
         
         Parameters
         ----------
         status : str, optional
-            Filter events by status (unopened, open, closed, settled)
+            Filter events by status (unopened, open, closed, settled), default open
         series_ticker : str, optional
             Series ticker to retrieve contracts for
         with_nested_markets : bool, optional
@@ -274,6 +275,9 @@ class Kalshi:
             if len(sanity_check) != len(all_events):
                 print('Duplicate tickers found in all_events!')
                 break
+
+        if sub_title_filter is not None:
+            all_events = [event for event in all_events if sub_title_filter.lower() in event['sub_title'].lower()]
         
         return all_events
 
