@@ -373,6 +373,34 @@ class Kalshi:
         return all_events
 
     #################################
+    # Stocks
+    #################################
+    def get_sp500_year_end_range_markets(self, active_only=False):
+        event = f'KXINXY-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}DEC31'
+        event_data = self.get_event(event, with_nested_markets=True)
+
+        try:
+            return event_data['error']
+        except KeyError:
+            pass
+
+        markets = event_data['event']['markets']
+        return self._parse_active_only_markets(markets, active_only)
+    
+    def get_nasdaq_year_end_range_markets(self, active_only=False):
+        event = f'KXNASDAQ100Y-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}DEC31'
+        event_data = self.get_event(event, with_nested_markets=True)
+
+        try:
+            return event_data['error']
+        except KeyError:
+            pass
+
+        markets = event_data['event']['markets']
+        return self._parse_active_only_markets(markets, active_only)
+        
+    
+    #################################
     # Crypto
     #################################
     def get_bitcoin_yearly_high_markets(self, active_only=False):
@@ -400,7 +428,12 @@ class Kalshi:
         markets = event_data['event']['markets']
         return self._parse_active_only_markets(markets, active_only)
         
+    
+    #################################
+    # Account Info
+    #################################
     def get_account_balance(self):
         path = '/trade-api/v2/portfolio/balance'
         r = self._call_kalshi_auth('GET', path, params=None)
         return r
+    
