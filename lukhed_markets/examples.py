@@ -1,13 +1,12 @@
 from lukhed_markets.kalshi import Kalshi
+from lukhed_basic_utils import timeCommon as tC
 
 def kalshi_setup():
+    """
+    Set up the Kalshi API client by instantiating and going through the setup once.
+    After this is run once, instantiate without this parameter (e.g. `kalshi = Kalshi()`).
+    """
     kalshi = Kalshi(kalshi_setup=True)
-
-def test_kalshi():
-    kalshi = Kalshi()
-    available_markets = kalshi.get_markets()
-    balance = kalshi.get_account_balance()
-    stop = 1
 
 def march_madness_get_team_odds(round=64, status='open', tourney_year=25):
     """
@@ -48,3 +47,14 @@ def march_madness_get_team_odds(round=64, status='open', tourney_year=25):
                                 'open_interest': market['open_interest']}
                                 )
     return game_odds
+
+def get_candle_history_for_market():
+    kalshi = Kalshi()
+    candles = kalshi.get_market_candlesticks(
+        'KXLCPIMAXYOY',
+        'KXLCPIMAXYOY-25-P3.99',
+        '20250101000000',  # start time
+        tC.create_timestamp(output_format="%Y%m%d%H%M%S"),  # end time
+        '1d'  # interval
+        )
+    return candles

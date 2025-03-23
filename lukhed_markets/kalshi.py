@@ -348,6 +348,56 @@ class Kalshi:
         r = self._call_kalshi_auth('GET', path, params=None)
         return r
     
+    def get_market_candlesticks(self, series_ticker, ticker, start_ts, end_ts, period_interval, 
+                                ts_format="%Y%m%d%H%M%S", ts_timezone="US/Eastern"):
+        """
+        Endpoint for getting the historical candlesticks for a market
+        https://trading-api.readme.io/reference/getmarketcandlesticks-1
+
+        Parameters
+        ----------
+        series_ticker : str
+            Unique identifier for the series.
+        ticker : str
+            Unique identifier for the market.
+        start_ts : str
+            Restricts the candlesticks to those covering time periods that end on or after this timestamp.
+        end_ts : str
+            Restricts the candlesticks to those covering time periods that end on or before this timestamp.
+                Must be within 5000 period_intervals after start_ts.
+        period_interval : str()
+            Specifies the length of each candlestick period, '1m', '1h', or '1d'.
+        ts_format : str, optional
+            Format of the timestamp, by default "%Y%m%d%H%M%S"
+        ts_timezone : str, optional
+            Timezone of the timestamp (any valid timezone string supported by zoneinfo), by default "US/Eastern"
+            
+        Returns
+        -------
+        dict
+            Historical candlestick data for the specified market
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/series/{series_ticker}/markets/{ticker}/candlesticks'
+        
+        if period_interval == '1m':
+            period_interval = 1
+        elif period_interval == '1h':
+            period_interval = 60
+        elif period_interval == '1d':
+            period_interval = 1440
+        else:
+            raise ValueError('Invalid period_interval. Must be "1m", "1h", or "1d".')
+        
+        start_ts = tC.convert_to_unix(start_ts, ts_format, ts_timezone)
+        end_ts = tC.convert_to_unix(end_ts, ts_format, ts_timezone)
+        params = {
+            'start_ts': start_ts,
+            'end_ts': end_ts,
+            'period_interval': period_interval
+        }
+        r = self._call_kalshi_non_auth(url, params=params)
+        return r
+
     #################################
     # Custom Wrapper Functions
     #################################
@@ -490,4 +540,4 @@ class Kalshi:
     #################################
     # Custom Account Info
     #################################
-    
+
