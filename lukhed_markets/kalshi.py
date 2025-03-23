@@ -398,6 +398,32 @@ class Kalshi:
         r = self._call_kalshi_non_auth(url, params=params)
         return r
 
+    def get_market_orderbook(self, ticker, depth=None):
+        """
+        Endpoint for getting the orderbook for a market
+        https://trading-api.readme.io/reference/getmarketorderbook-1
+
+        Parameters
+        ----------
+        ticker : str
+            Market ticker.
+        depth : int, optional
+            Depth specifies the maximum number of orderbook price levels you want to see for either side.
+            Only the highest (most relevant) price level are kept.
+        
+        Returns
+        -------
+        dict
+            Orderbook data for the specified market
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}/orderbook'
+        params = {}
+        if depth is not None:
+            params['depth'] = depth
+            
+        r = self._call_kalshi_non_auth(url, params=params)
+        return r
+
     #################################
     # Custom Wrapper Functions
     #################################
