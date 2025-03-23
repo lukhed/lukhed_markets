@@ -15,10 +15,9 @@ A Python wrapper for the Kalshi Elections API that provides easy access to marke
 
 ### Installation
 
-Requirements:
-- Python 3.x
-- cryptography
-- lukhed_basic_utils
+```python
+pip install lukhed-markets
+```
 
 ### Authentication Setup
 
