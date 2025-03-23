@@ -155,7 +155,7 @@ class Kalshi:
             return [x for x in markets if x['status'] == 'active']
         else:
             return markets
-    
+
     @staticmethod
     def calculate_bet_yes_no_trade(trade_data):
         side_take = trade_data['taker_side']
@@ -462,6 +462,70 @@ class Kalshi:
             Current status of the exchange
         """
         url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/status'
+        r = self._call_kalshi_non_auth(url)
+        return r
+
+    def get_milestones(self, limit=100, cursor=None, minimum_start_date=None, category=None, 
+                      type=None, related_event_ticker=None):
+        """
+        Endpoint for getting data about milestones with optional filtering
+        https://trading-api.readme.io/reference/getmilestones-1
+
+        Parameters
+        ----------
+        limit : int, optional
+            Number of items to return per page (1 to 500), defaults to 100
+        cursor : str, optional
+            Cursor for pagination
+        minimum_start_date : str, optional
+            Minimum start date to filter milestones (date-time format)
+        category : str, optional
+            Filter by category
+        type : str, optional
+            Filter by type
+        related_event_ticker : str, optional
+            Filter by related event ticker
+        
+        Returns
+        -------
+        dict
+            Data about milestones matching the filter criteria
+        """
+        url = 'https://api.elections.kalshi.com/trade-api/v2/milestones/'
+        params = {
+            'limit': limit
+        }
+        
+        if cursor:
+            params['cursor'] = cursor
+        if minimum_start_date:
+            params['minimum_start_date'] = minimum_start_date
+        if category:
+            params['category'] = category
+        if type:
+            params['type'] = type
+        if related_event_ticker:
+            params['related_event_ticker'] = related_event_ticker
+            
+        r = self._call_kalshi_non_auth(url, params=params)
+        return r
+    
+    def get_milestone(self, milestone_id):
+        """
+        Endpoint for getting data about a specific milestone by its ID
+        https://trading-api.readme.io/reference/getmilestone-1
+
+        Parameters
+        ----------
+        milestone_id : str
+            Unique identifier for the milestone
+
+        Returns
+        -------
+        dict
+            Data about the specific milestone
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/milestones/{milestone_id}'
         r = self._call_kalshi_non_auth(url)
         return r
 
