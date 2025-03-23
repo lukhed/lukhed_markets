@@ -98,8 +98,7 @@ class Kalshi:
         return rC.request_json(url, headers=headers, params=params)
 
     def _check_exchange_status(self):
-        url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/status'
-        r = self._call_kalshi_non_auth(url)
+        r = self.get_exchange_status()
         print(r)
 
     def _check_create_km(self):
@@ -449,6 +448,20 @@ class Kalshi:
             The exchange schedule information
         """
         url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/schedule'
+        r = self._call_kalshi_non_auth(url)
+        return r
+    
+    def get_exchange_status(self):
+        """
+        Endpoint for getting the exchange status
+        https://trading-api.readme.io/reference/getexchangestatus-1
+
+        Returns
+        -------
+        dict
+            Current status of the exchange
+        """
+        url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/status'
         r = self._call_kalshi_non_auth(url)
         return r
 
