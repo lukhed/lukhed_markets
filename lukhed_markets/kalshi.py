@@ -98,8 +98,7 @@ class Kalshi:
         return rC.request_json(url, headers=headers, params=params)
 
     def _check_exchange_status(self):
-        url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/status'
-        r = self._call_kalshi_non_auth(url)
+        r = self.get_exchange_status()
         print(r)
 
     def _check_create_km(self):
@@ -156,7 +155,7 @@ class Kalshi:
             return [x for x in markets if x['status'] == 'active']
         else:
             return markets
-    
+
     @staticmethod
     def calculate_bet_yes_no_trade(trade_data):
         side_take = trade_data['taker_side']
@@ -348,6 +347,188 @@ class Kalshi:
         r = self._call_kalshi_auth('GET', path, params=None)
         return r
     
+    def get_market_candlesticks(self, series_ticker, ticker, start_ts, end_ts, period_interval, 
+                                ts_format="%Y%m%d%H%M%S", ts_timezone="US/Eastern"):
+        """
+        Endpoint for getting the historical candlesticks for a market
+        https://trading-api.readme.io/reference/getmarketcandlesticks-1
+
+        Parameters
+        ----------
+        series_ticker : str
+            Unique identifier for the series.
+        ticker : str
+            Unique identifier for the market.
+        start_ts : str
+            Restricts the candlesticks to those covering time periods that end on or after this timestamp.
+        end_ts : str
+            Restricts the candlesticks to those covering time periods that end on or before this timestamp.
+                Must be within 5000 period_intervals after start_ts.
+        period_interval : str()
+            Specifies the length of each candlestick period, '1m', '1h', or '1d'.
+        ts_format : str, optional
+            Format of the timestamp, by default "%Y%m%d%H%M%S"
+        ts_timezone : str, optional
+            Timezone of the timestamp (any valid timezone string supported by zoneinfo), by default "US/Eastern"
+            
+        Returns
+        -------
+        dict
+            Historical candlestick data for the specified market
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/series/{series_ticker}/markets/{ticker}/candlesticks'
+        
+        if period_interval == '1m':
+            period_interval = 1
+        elif period_interval == '1h':
+            period_interval = 60
+        elif period_interval == '1d':
+            period_interval = 1440
+        else:
+            raise ValueError('Invalid period_interval. Must be "1m", "1h", or "1d".')
+        
+        start_ts = tC.convert_to_unix(start_ts, ts_format, ts_timezone)
+        end_ts = tC.convert_to_unix(end_ts, ts_format, ts_timezone)
+        params = {
+            'start_ts': start_ts,
+            'end_ts': end_ts,
+            'period_interval': period_interval
+        }
+        r = self._call_kalshi_non_auth(url, params=params)
+        return r
+
+    def get_market_orderbook(self, ticker, depth=None):
+        """
+        Endpoint for getting the orderbook for a market
+        https://trading-api.readme.io/reference/getmarketorderbook-1
+
+        Parameters
+        ----------
+        ticker : str
+            Market ticker.
+        depth : int, optional
+            Depth specifies the maximum number of orderbook price levels you want to see for either side.
+            Only the highest (most relevant) price level are kept.
+        
+        Returns
+        -------
+        dict
+            Orderbook data for the specified market
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}/orderbook'
+        params = {}
+        if depth is not None:
+            params['depth'] = depth
+            
+        r = self._call_kalshi_non_auth(url, params=params)
+        return r
+
+    def get_exchange_announcements(self):
+        """
+        Endpoint for getting all exchange-wide announcements
+        https://trading-api.readme.io/reference/getexchangeannouncements-1
+
+        Returns
+        -------
+        dict
+            All exchange-wide announcements
+        """
+        url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/announcements'
+        r = self._call_kalshi_non_auth(url)
+        return r
+
+    def get_exchange_schedule(self):
+        """
+        Endpoint for getting the exchange schedule
+        https://trading-api.readme.io/reference/getexchangeschedule-1
+
+        Returns
+        -------
+        dict
+            The exchange schedule information
+        """
+        url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/schedule'
+        r = self._call_kalshi_non_auth(url)
+        return r
+    
+    def get_exchange_status(self):
+        """
+        Endpoint for getting the exchange status
+        https://trading-api.readme.io/reference/getexchangestatus-1
+
+        Returns
+        -------
+        dict
+            Current status of the exchange
+        """
+        url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/status'
+        r = self._call_kalshi_non_auth(url)
+        return r
+
+    def get_milestones(self, limit=100, cursor=None, minimum_start_date=None, category=None, 
+                      type=None, related_event_ticker=None):
+        """
+        Endpoint for getting data about milestones with optional filtering
+        https://trading-api.readme.io/reference/getmilestones-1
+
+        Parameters
+        ----------
+        limit : int, optional
+            Number of items to return per page (1 to 500), defaults to 100
+        cursor : str, optional
+            Cursor for pagination
+        minimum_start_date : str, optional
+            Minimum start date to filter milestones (date-time format)
+        category : str, optional
+            Filter by category
+        type : str, optional
+            Filter by type
+        related_event_ticker : str, optional
+            Filter by related event ticker
+        
+        Returns
+        -------
+        dict
+            Data about milestones matching the filter criteria
+        """
+        url = 'https://api.elections.kalshi.com/trade-api/v2/milestones/'
+        params = {
+            'limit': limit
+        }
+        
+        if cursor:
+            params['cursor'] = cursor
+        if minimum_start_date:
+            params['minimum_start_date'] = minimum_start_date
+        if category:
+            params['category'] = category
+        if type:
+            params['type'] = type
+        if related_event_ticker:
+            params['related_event_ticker'] = related_event_ticker
+            
+        r = self._call_kalshi_non_auth(url, params=params)
+        return r
+    
+    def get_milestone(self, milestone_id):
+        """
+        Endpoint for getting data about a specific milestone by its ID
+        https://trading-api.readme.io/reference/getmilestone-1
+
+        Parameters
+        ----------
+        milestone_id : str
+            Unique identifier for the milestone
+
+        Returns
+        -------
+        dict
+            Data about the specific milestone
+        """
+        url = f'https://api.elections.kalshi.com/trade-api/v2/milestones/{milestone_id}'
+        r = self._call_kalshi_non_auth(url)
+        return r
+
     #################################
     # Custom Wrapper Functions
     #################################
@@ -490,4 +671,4 @@ class Kalshi:
     #################################
     # Custom Account Info
     #################################
-    
+
