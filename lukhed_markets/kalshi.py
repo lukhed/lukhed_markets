@@ -424,6 +424,20 @@ class Kalshi:
         r = self._call_kalshi_non_auth(url, params=params)
         return r
 
+    def get_exchange_announcements(self):
+        """
+        Endpoint for getting all exchange-wide announcements
+        https://trading-api.readme.io/reference/getexchangeannouncements-1
+
+        Returns
+        -------
+        dict
+            All exchange-wide announcements
+        """
+        url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/announcements'
+        r = self._call_kalshi_non_auth(url)
+        return r
+
     #################################
     # Custom Wrapper Functions
     #################################
