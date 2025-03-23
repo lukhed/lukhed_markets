@@ -438,6 +438,20 @@ class Kalshi:
         r = self._call_kalshi_non_auth(url)
         return r
 
+    def get_exchange_schedule(self):
+        """
+        Endpoint for getting the exchange schedule
+        https://trading-api.readme.io/reference/getexchangeschedule-1
+
+        Returns
+        -------
+        dict
+            The exchange schedule information
+        """
+        url = 'https://api.elections.kalshi.com/trade-api/v2/exchange/schedule'
+        r = self._call_kalshi_non_auth(url)
+        return r
+
     #################################
     # Custom Wrapper Functions
     #################################
