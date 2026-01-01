@@ -2,7 +2,8 @@ from lukhed_basic_utils import osCommon as osC
 from lukhed_basic_utils import requestsCommon as rC
 from lukhed_basic_utils import timeCommon as tC
 from lukhed_basic_utils import listWorkCommon as lC
-from lukhed_basic_utils.githubCommon import KeyManager
+from lukhed_basic_utils import fileCommon as fC
+from lukhed_basic_utils.classCommon import LukhedAuth
 from typing import Optional
 import base64
 from cryptography.hazmat.primitives import hashes, serialization
@@ -11,29 +12,44 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
 import datetime
 
-class Kalshi:
-    def __init__(self, api_delay='basic', kalshi_setup=False):
+class Kalshi(LukhedAuth):
+    def __init__(self, api_delay='basic', key_management='github'):
+        super().__init__('kalshiApi', key_management=key_management)
         
-        
+        if self._auth_data is None:
+            print("No existing Kalshi API key data found, starting setup...")
+            self._kalshi_api_setup()
+
+        self._check_dl_private_key_file()
+
+
         self.read_delay = None
         self.write_delay = None
         self._set_api_delays(api_delay)
         self.base_url = 'https://api.elections.kalshi.com'
 
-        # Setup
-        if kalshi_setup:
-            self._kalshi_api_setup()
-
 
         # Access Data
-        self.kM = None                              # type: Optional[KeyManager]
         self._token_file_path = osC.create_file_path_string(['lukhedConfig', 'localTokenFile.json'])
         self._private_key_path = None
         self._key = None
         self._private_key = None
-        self._check_create_km()
 
         self._check_exchange_status()
+
+    def _check_dl_private_key_file(self):
+        """
+        Kalshi uses a private key in addition to api key. This ensures it is downloaded appropriately based on 
+        prior setups.
+        """
+        key_file_name = self._auth_data['privateKeyFileName']
+        fp = osC.append_to_dir(self.kM._default_local_config, key_file_name)
+        if osC.check_if_file_exists(fp):
+            pass
+        else:
+            key_data = self.kM.retrieve_file_content(key_file_name).decode('utf-8')
+            
+            fC.write_content_to_file(fp, key_data)
 
     def _set_api_delays(self, plan):
         plan = plan.lower()
@@ -100,32 +116,12 @@ class Kalshi:
     def _check_exchange_status(self):
         r = self.get_exchange_status()
         print(r)
-
-    def _check_create_km(self):
-        if self.kM is None:
-            # get the key data previously setup
-            self.kM = KeyManager('kalshiApi', config_file_preference='local')
-            self._key = self.kM.key_data['key']
-            self._private_key_path = self.kM.key_data['privateKeyPath']
-            
-            with open(self._private_key_path, "rb") as key_file:
-                self._private_key = serialization.load_pem_private_key(
-                    key_file.read(),
-                    password=None,  # or provide a password if your key is encrypted
-                    backend=default_backend()
-                )
-
-    def _build_key_file(self):
-        full_key_data = {
-            "key": self._key,
-            "privateKeyPath": self._private_key_path,
-        }
-        return full_key_data
     
     def _kalshi_api_setup(self):
-        print("This is the lukhed setup for Kalshi API wrapper.\nIf you haven't already, you first need to setup a"
-              " Kalshi account (free) and generate api keys.\nThe data you provide in this setup will be stored on "
-              "your local device.\n\n"
+        print("\n\n***********************************\n" \
+        "This is the lukhed setup for Kalshi API wrapper.\nIf you haven't already, you first need to setup a"
+              f" Kalshi account (free) and generate api keys.\nThe data you provide in this setup will be stored based "
+              f"on your key management parameter ({self._key_management}).\n\n"
               "To continue, you need the following from Kalshi:\n"
                 "1. Key identifier (can be found on your key page here: https://kalshi.com/account/profile)\n"
                 "2. Private key file downloaded from Kalshi upon creation of key\n"
@@ -137,16 +133,38 @@ class Kalshi:
             print("OK, come back when you have setup your developer account")
             quit()
 
-        self._key = input("Paste your key identifier here (found in Kalshi API keys secion "
-                          "https://kalshi.com/account/profile):\n").replace(" ", "")
-        key_fn = input("Write the name of your private key file downloaded from kalshi upon key creation"
+        identifier_key = input("Paste your key identifier here (found in Kalshi API keys secion "
+                               "https://kalshi.com/account/profile):\n").replace(" ", "")
+        
+        key_fn = input(f"Place your private key file downloaded from Kalshi into the following directory:\n"
+                       f"{self.kM.github_config_dir} and write the full name of your private key file "
                        " here (e.g., key.txt):\n")
-        self._private_key_path = osC.create_file_path_string(['lukhedConfig', key_fn])
-        key_data = self._build_key_file()
+        
+        private_key_path = osC.create_file_path_string(['lukhedConfig', key_fn])
+        if osC.check_if_file_exists(private_key_path):
+            pass
+        else:
+            input(f"\n\nERROR: The file path {private_key_path} does not exist. Please make sure you have "
+                  f"placed {key_fn} in the lukhedConfig folder.\n\n"
+                  "Press enter to try again.")
+            if osC.check_if_file_exists(private_key_path):
+                pass
+            else:
+                print("File still not found, exiting setup.")
+                quit()
+
+        print("Setting up Kalshi API key data...")
+        self._auth_data = {
+            "key": identifier_key,
+            "privateKeyFileName": key_fn,
+        }
+        self.kM.force_update_key_data(self._auth_data)
         tC.sleep(1)
-        self.kM = KeyManager('kalshiApi', config_file_preference='local', provide_key_data=key_data, force_setup=True)
-        input(f"\n\nFINAL STEP: Copy your private key file here: {self._private_key_path}\n\n"
-              "Press enter when you are ready to continue")
+        private_key_content = fC.read_file_content(private_key_path)
+        self.kM.create_update_file(key_fn, private_key_content, 'created with lukhed basic utils for Kalshi API')
+        print("Setup complete!")
+        
+
 
         print("\n\nThe Kalshi portion is complete! Now setting up key management with lukhed library...")
         
@@ -602,7 +620,7 @@ class Kalshi:
         list
             List of SP500 year end range markets.
         """
-        event = f'KXINXY-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}DEC31'
+        event = f'KXINXY-{tC.convert_date_format(tC.get_current_year(), "%Y", "%y")}DEC31'
         event_data = self.get_event(event, with_nested_markets=True)
 
         try:
@@ -627,7 +645,7 @@ class Kalshi:
         list
             List of NASDAQ year end range markets.
         """
-        event = f'KXNASDAQ100Y-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}DEC31'
+        event = f'KXNASDAQ100Y-{tC.convert_date_format(tC.get_current_year(), "%Y", "%y")}DEC31'
         event_data = self.get_event(event, with_nested_markets=True)
 
         try:
@@ -656,7 +674,7 @@ class Kalshi:
         list
             List of bitcoin yearly high markets.
         """
-        event = f'KXBTCMAXY-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}'
+        event = f'KXBTCMAXY-{tC.convert_date_format(tC.get_current_year(), "%Y", "%y")}'
         event_data = self.get_event(event, with_nested_markets=True)
 
         try:
