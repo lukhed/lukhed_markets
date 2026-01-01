@@ -191,7 +191,8 @@ class Kalshi(LukhedAuth):
     #################################
     # Naive Wrapper Functions
     #################################
-    def get_markets(self, limit=100, cursor=None, event_ticker=None, series_ticker=None, max_close_ts=None, min_close_ts=None, status=None, tickers=None, return_raw_data=False):
+    def get_markets(self, limit=1000, cursor=None, event_ticker=None, series_ticker=None, max_close_ts=None, 
+                    min_close_ts=None, status=None, tickers=None, return_raw_data=False):
         """
         Endpoint for getting data about all markets
         https://trading-api.readme.io/reference/getmarkets-1
@@ -199,7 +200,7 @@ class Kalshi(LukhedAuth):
         Parameters
         ----------
         limit : int, optional
-            1 to 1000, Parameter to specify the number of results per page. Defaults to 100.
+            1 to 1000, Parameter to specify the number of results per page. Defaults to 1000 (max).
         cursor : str, optional
             The Cursor represents a pointer to the next page of records in the pagination. So this optional parameter, 
             when filled, should be filled with the cursor string returned in a previous request to this end-point.
@@ -551,6 +552,39 @@ class Kalshi(LukhedAuth):
         url = f'https://api.elections.kalshi.com/trade-api/v2/milestones/{milestone_id}'
         r = self._call_kalshi_non_auth(url)
         return r
+    
+    def get_tags_for_series_categories(self):
+        """
+        This endpoint returns a mapping of series categories to their associated tags, which can be used for 
+        filtering and search functionality.
+        https://docs.kalshi.com/api-reference/search/get-tags-for-series-categories
+
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+
+        url = f'https://api.elections.kalshi.com/trade-api/v2/search/tags_by_categories'
+        r = self._call_kalshi_non_auth(url)
+        return r["tags_by_categories"]
+    
+    def get_filters_by_sport(self):
+        """
+        This endpoint returns filtering options available for each sport, including scopes and competitions. 
+        It also provides an ordered list of sports for display purposes.
+        https://docs.kalshi.com/api-reference/search/get-filters-by-sport
+
+        Returns
+        -------
+        dict
+            Mapping of sports to their associated filters
+        """
+
+        url = f'https://api.elections.kalshi.com/trade-api/v2/search/filters_by_sport'
+        r = self._call_kalshi_non_auth(url)
+        return r
 
     #################################
     # Custom Wrapper Functions
@@ -608,10 +642,49 @@ class Kalshi(LukhedAuth):
         
         return all_events
 
+
+    #################################
+    # Custom Series
+    #################################
+    def get_economics_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?category=Economics'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_inflation_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=Inflation'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_fed_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=Fed'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_nasdaq_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=Nasdaq'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_sp500_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=S%26P'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_treasuries_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=Treasuries'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_wti_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=WTI'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
     #################################
     # Custom Stocks
     #################################
-    def get_sp500_year_end_range_markets(self, active_only=False):
+    def get_sp500_year_end_range_markets(self, active_only=False, force_year=None):
         """
         Get all SP500 year end range markets.
 
@@ -619,14 +692,32 @@ class Kalshi(LukhedAuth):
         ----------
         active_only : bool, optional
             Only return active markets, by default False
-
+        force_year : int, optional
+            Force a specific year for the markets, by default None
         Returns
         -------
         list
             List of SP500 year end range markets.
         """
-        event = f'KXINXY-{tC.convert_date_format(tC.get_current_year(), "%Y", "%y")}DEC31'
-        event_data = self.get_event(event, with_nested_markets=True)
+        year = int(tC.get_current_year()) if force_year is None else force_year
+        series = self.get_sp500_series()
+        yearly_range_series = [x for x in series if 'yearly range' in x['title'].lower()]
+        applicable_events = []
+        for series in yearly_range_series:
+            ticker = series['ticker']
+            events = self.get_events(series_ticker=ticker)
+            applicable_events.extend([x for x in events['events'] if 
+                                      tC.convert_non_python_format(x['strike_date'])['year'] == 
+                                      year])
+            
+        if len(applicable_events) == 1:
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        elif len(applicable_events) > 1:
+            print("Warning: Multiple applicable events found, using the first one.")
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        else:
+            print("ERROR: No applicable events found for SP500 yearly range markets.")
+            return []
 
         try:
             return event_data['error']
@@ -636,22 +727,41 @@ class Kalshi(LukhedAuth):
         markets = event_data['event']['markets']
         return self._parse_active_only_markets(markets, active_only)
     
-    def get_nasdaq_year_end_range_markets(self, active_only=False):
+    def get_nasdaq_year_end_range_markets(self, active_only=False, force_year=None):
         """
-        Get all NASDAQ year end range markets.
+        Get all Nasdaq year end range markets.
 
         Parameters
         ----------
         active_only : bool, optional
             Only return active markets, by default False
+        force_year : int, optional
+            Force a specific year for the markets, by default None
 
         Returns
         -------
         list
-            List of NASDAQ year end range markets.
+            List of Nasdaq year end range markets.
         """
-        event = f'KXNASDAQ100Y-{tC.convert_date_format(tC.get_current_year(), "%Y", "%y")}DEC31'
-        event_data = self.get_event(event, with_nested_markets=True)
+        year = int(tC.get_current_year()) if force_year is None else force_year
+        series = self.get_nasdaq_series()
+        yearly_range_series = [x for x in series if 'yearly range' in x['title'].lower()]
+        applicable_events = []
+        for series in yearly_range_series:
+            ticker = series['ticker']
+            events = self.get_events(series_ticker=ticker)
+            applicable_events.extend([x for x in events['events'] if 
+                                      tC.convert_non_python_format(x['strike_date'])['year'] == 
+                                      year])
+            
+        if len(applicable_events) == 1:
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        elif len(applicable_events) > 1:
+            print("Warning: Multiple applicable events found, using the first one.")
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        else:
+            print("ERROR: No applicable events found for Nasdaq yearly range markets.")
+            return []
 
         try:
             return event_data['error']
@@ -660,6 +770,7 @@ class Kalshi(LukhedAuth):
 
         markets = event_data['event']['markets']
         return self._parse_active_only_markets(markets, active_only)
+        
         
     
     #################################
