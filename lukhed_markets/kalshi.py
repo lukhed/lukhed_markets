@@ -41,13 +41,6 @@ class Kalshi(LukhedAuth):
         self._set_api_delays(api_delay)
         self.base_url = 'https://api.elections.kalshi.com'
 
-
-        # Access Data
-        self._token_file_path = osC.create_file_path_string(['lukhedConfig', 'localTokenFile.json'])
-        self._private_key_path = None
-        self._key = None
-        self._private_key = None
-
         self._check_exchange_status()
 
     def _check_dl_private_key_file(self):
@@ -61,7 +54,6 @@ class Kalshi(LukhedAuth):
             pass
         else:
             key_data = self.kM.retrieve_file_content(key_file_name).decode('utf-8')
-            
             fC.write_content_to_file(fp, key_data)
 
     def _set_api_delays(self, plan):
