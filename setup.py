@@ -18,6 +18,6 @@ setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[
-        "lukhed-basic-utils>=1.4.6"
+        "lukhed-basic-utils>=1.6.9"
     ],
 )
