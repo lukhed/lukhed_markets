@@ -14,6 +14,19 @@ import datetime
 
 class Kalshi(LukhedAuth):
     def __init__(self, api_delay='basic', key_management='github'):
+        """
+        Kalshi API Wrapper with authentication handling.
+
+        Parameters
+        ----------
+        api_delay : str, optional
+            The type of account you have with Kalshi: basic, advanced, premier, or prime, by default 'basic'
+            This determines the rate limits (delays) for API calls.
+        key_management : str, optional
+            Options for storing your authentication data. 'local' to store your auth on your local hardware. 
+            'github' to store it in a private GitHub repository (you will need a GitHub account and GitHub token),
+            by default 'github'
+        """
         super().__init__('kalshiApi', key_management=key_management)
         
         if self._auth_data is None:

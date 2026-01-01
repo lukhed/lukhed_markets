@@ -3,10 +3,15 @@ from lukhed_basic_utils import timeCommon as tC
 
 def kalshi_setup():
     """
-    Set up the Kalshi API client by instantiating and going through the setup once.
-    After this is run once, instantiate without this parameter (e.g. `kalshi = Kalshi()`).
+    The Kalshi class handles setup automatically. You can store your api key and private key file in your 
+    private github account by default, or set Kalshi to run in local mode only.
     """
-    kalshi = Kalshi(kalshi_setup=True)
+
+    # default setup
+    kalshi = Kalshi()
+
+    # local only setup
+    # kalshi = Kalshi(key_management='local')
 
 def march_madness_get_team_odds(round=64, status='open', tourney_year=25):
     """
