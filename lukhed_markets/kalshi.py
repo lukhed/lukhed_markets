@@ -447,6 +447,56 @@ class Kalshi(LukhedAuth):
         r = self._call_kalshi_non_auth(url, params=params)
         return r
 
+    def get_market_spread(self, ticker, depth=None):
+        """
+        Calculate the bid-ask spread for a market using the order book.
+
+        Parameters
+        ----------
+        ticker : str
+            Market ticker.
+        depth : int, optional
+            Depth of the order book to consider.
+
+        Returns
+        -------
+        dict
+            Spread information: {'yes_spread': float, 'no_spread': float, 'best_yes_bid': int, 'best_yes_ask': int, 'best_no_bid': int, 'best_no_ask': int}
+        """
+        orderbook = self.get_market_orderbook(ticker, depth=depth)
+        
+        yes_orders = orderbook['orderbook']['yes']
+        no_orders = orderbook['orderbook']['no']
+        
+        if not yes_orders or not no_orders:
+            return {'yes_spread': None, 'no_spread': None, 'best_yes_bid': None, 'best_yes_ask': None, 'best_no_bid': None, 'best_no_ask': None}
+        
+        # Best YES bid: Highest price in the yes array (best to sell yes)
+        best_yes_bid = max(order['price'] for order in yes_orders)
+        
+        # Best YES ask: 100 - (Highest price in the no array)  [highest NO bid]
+        best_no_bid = max(order['price'] for order in no_orders)
+        best_yes_ask = 100 - best_no_bid
+        
+        yes_spread = best_yes_ask - best_yes_bid
+        
+        # Best NO bid: Highest price in the no array
+        best_no_bid = best_no_bid
+        
+        # Best NO ask: 100 - (Highest price in the yes array)  [highest YES bid]
+        best_no_ask = 100 - best_yes_bid
+        
+        no_spread = best_no_ask - best_no_bid
+        
+        return {
+            'yes_spread': yes_spread,
+            'no_spread': no_spread,
+            'best_yes_bid': best_yes_bid,
+            'best_yes_ask': best_yes_ask,
+            'best_no_bid': best_no_bid,
+            'best_no_ask': best_no_ask
+        }
+
     def get_exchange_announcements(self):
         """
         Endpoint for getting all exchange-wide announcements
@@ -681,6 +731,11 @@ class Kalshi(LukhedAuth):
         r = self._call_kalshi_non_auth(url)
         return r['series']
     
+    def get_btc_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=BTC'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
     #################################
     # Custom Stocks
     #################################
@@ -776,22 +831,39 @@ class Kalshi(LukhedAuth):
     #################################
     # Custom Crypto
     #################################
-    def get_bitcoin_yearly_high_markets(self, active_only=False):
+    def get_bitcoin_yearly_high_markets(self, active_only=False, force_year=None):
         """
-        Get all bitcoin yearly high markets.
+        Get all Bitcoin yearly high markets.
 
         Parameters
         ----------
         active_only : bool, optional
             Only return active markets, by default False
+        force_year : int, optional
+            Force a specific year for the markets, by default None
 
         Returns
         -------
         list
-            List of bitcoin yearly high markets.
+            List of Bitcoin yearly max markets.
         """
-        event = f'KXBTCMAXY-{tC.convert_date_format(tC.get_current_year(), "%Y", "%y")}'
-        event_data = self.get_event(event, with_nested_markets=True)
+        series = self.get_btc_series()
+        yearly_max_series = [x for x in series if 'how high will bitcoin get this year' in x['title'].lower()]
+        applicable_events = []
+        for series in yearly_max_series:
+            ticker = series['ticker']
+            events = self.get_events(series_ticker=ticker)
+            applicable_events.extend([x for x in events['events'] if 
+                                      'before dec 31, 2026' in x['sub_title'].lower()])
+            
+        if len(applicable_events) == 1:
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        elif len(applicable_events) > 1:
+            print("Warning: Multiple applicable events found, using the first one.")
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        else:
+            print("ERROR: No applicable events found for Bitcoin year end range markets.")
+            return []
 
         try:
             return event_data['error']
@@ -800,6 +872,7 @@ class Kalshi(LukhedAuth):
 
         markets = event_data['event']['markets']
         return self._parse_active_only_markets(markets, active_only)
+        
         
     
     #################################
