@@ -4,7 +4,6 @@ from lukhed_basic_utils import timeCommon as tC
 from lukhed_basic_utils import listWorkCommon as lC
 from lukhed_basic_utils import fileCommon as fC
 from lukhed_basic_utils.classCommon import LukhedAuth
-from typing import Optional
 import base64
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -165,8 +164,11 @@ class Kalshi(LukhedAuth):
         }
         self.kM.force_update_key_data(self._auth_data)
         tC.sleep(1)
-        private_key_content = fC.read_file_content(private_key_path)
-        self.kM.create_update_file(key_fn, private_key_content, 'created with lukhed basic utils for Kalshi API')
+        if self._key_management == 'github':
+            print("Uploading private key file to your GitHub account...")
+            private_key_content = fC.read_file_content(private_key_path)
+            self.kM.create_update_file(key_fn, private_key_content, 'created with lukhed basic utils for Kalshi API')
+
         print("Setup complete!")
         
 
