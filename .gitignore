@@ -173,3 +173,5 @@ cython_debug/
 working.py
 
 lukhedConfig/
+
+plots/
