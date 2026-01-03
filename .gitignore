@@ -175,3 +175,7 @@ working.py
 lukhedConfig/
 
 plots/
+
+.vscode/
+
+testing.py
