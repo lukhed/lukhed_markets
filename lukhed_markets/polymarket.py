@@ -6,13 +6,18 @@ from .polymarket_tags import TAG_MAPPING
 import json
 
 class Polymarket:
+    """
+    This class wraps the polymarket gamma API and adds custom discovery methods for convenience. It also allows access 
+    to py-clob-client via self.clob_api.
+
+    clob_api documentation: https://github.com/Polymarket/py-clob-client
+    gamma_api documentation: https://docs.polymarket.com/developers/gamma-markets-api/overview
+    """
     def __init__(self, api_delay=0.1):
         self.delay = api_delay
         self.clob_api = ClobClient("https://clob.polymarket.com")
         self.gamma_url = 'https://gamma-api.polymarket.com'
-        ok = self.clob_api.get_ok()
-        time = self.clob_api.get_server_time()
-        print(ok, time)
+        print("gamma api status:", self.get_gamma_status())
 
     def _parse_api_delay(self, rate_limit=None):
         """
@@ -52,8 +57,7 @@ class Polymarket:
         self._parse_api_delay(rate_limit_tuple)
         response_data = {
             "statusCode": response.status_code,
-            "data": data,
-            "next": response.next
+            "data": data
         }
         return response_data
     
@@ -84,6 +88,18 @@ class Polymarket:
     
         return all_data
 
+    def get_gamma_status(self):
+        url = 'https://gamma-api.polymarket.com/status'
+        response = rC.make_request(url)
+        if response.status_code != 200:
+            print(f"Error fetching status: {response.status_code}")
+            return None
+        return response.text
+
+
+    ###############################
+    # Market Methods
+    ###############################
     def get_markets(self, get_all_data=True, include_closed=False, active_only=True, tag_filter=None):
         """
         Gets a list of markets from the Polymarket Gamma API.
@@ -100,8 +116,8 @@ class Polymarket:
             Tag ID label to filter markets, by default None
         Returns
         -------
-        _type_
-            _description_
+        list
+            List of markets with market data
         """
 
         tag_filter = self._parse_tag(tag_filter)
@@ -124,6 +140,10 @@ class Polymarket:
             
             return response['data']
     
+    
+    ##############################
+    # Event Methods
+    ##############################
     def get_events(self, tag=None, include_closed=False, active_only=True, get_all_data=True):
         """
         Gets a list of events from the Polymarket Gamma API.
@@ -158,7 +178,42 @@ class Polymarket:
                 print(f"Error fetching events: {response['statusCode']}")
                 return []
             return response['data']
+        
+    def get_event_by_id(self, event_id):
+        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/events/{event_id}')
+        if response['statusCode'] != 200:
+            print(f"Error fetching event: {response['statusCode']}")
+            return None
+        return response['data']
     
+    def get_event_by_slug(self, event_slug):
+        """
+        Returns event data for a given event slug.
+
+        **Each event in polymarket has a slug in the URL. For example, when you visit:
+        https://polymarket.com/event/fed-decision-in-january?tid=1767460047178, the slug is 
+        'fed-decision-in-january'.**
+
+        Parameters
+        ----------
+        event_slug : str()
+            The slug of the event to retrieve.
+
+        Returns
+        -------
+        dict
+            Event data for the given slug.
+        """
+        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/events/slug/{event_slug}')
+        if response['statusCode'] != 200:
+            print(f"Error fetching event: {response['statusCode']}")
+            return None
+        return response['data']
+    
+    
+    ###############################
+    # Search Enablement Methods
+    ###############################
     def get_tags(self, get_all_data=True):
         """
         Gets a list of tags from the Polymarket Gamma API.
@@ -186,16 +241,3 @@ class Polymarket:
                 return []
             return response['data']
     
-    def get_event_by_id(self, event_id):
-        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/events/{event_id}')
-        if response['statusCode'] != 200:
-            print(f"Error fetching event: {response['statusCode']}")
-            return None
-        return response['data']
-    
-    def get_midpoint(self, token_id):
-        mid = self.clob_api.get_midpoint(token_id)
-        self._parse_api_delay()
-        return mid
-        
-
