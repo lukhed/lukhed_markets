@@ -295,6 +295,10 @@ class Polymarket:
             return []
         return response['data']
     
+    
+    ###############################
+    # Users
+    ###############################
     def list_comments(self, entity_type, entity_id, get_positions=True, get_all_data=True, ascending=True, 
                       holders_only=False):
         """
@@ -342,4 +346,62 @@ class Polymarket:
                 print(f"Error fetching comments: {response['statusCode']}")
                 return []
             return response['data']
-    
+
+    def get_leaderboards(self, category='OVERALL', time_period='ALL', rank_by='profit', get_all_data=False, 
+                         single_user_check=None, user_identifier='address'):
+        """
+        Gets the user leaderboard as available here: https://polymarket.com/leaderboard
+
+        Parameters
+        ----------
+        category : str, optional
+            Leaderboard type, options are (OVERALL, POLITICS, SPORTS, CRYPTO, CULTURE, MENTIONS, WEATHER, 
+            ECONOMICS, TECh, FINANCE), by default 'OVERALL'
+        time_period : str, optional
+            Leaderboard filter by time period, options are (ALL, DAY, WEEK, MONTH), by default 'ALL'
+        rank_by : str, optional
+            Ranks by profit or volume, by default 'profit'
+        get_all_data : bool, optional
+            Whether to retrieve all pages of leaderboard data, by default False
+        single_user_check : str, optional
+            User identifier to check for in the leaderboard. You can use either an address or a username as defined 
+            by user_identifier, by default None
+        user_identifier : str, optional
+            Identifier type for single user check, options are 'address' or 'username', by default 'address'
+
+        Returns
+        -------
+        list
+            List of leaderboard entries
+        """
+
+        limit = 50
+        url = 'https://data-api.polymarket.com/v1/leaderboard'
+        category = category.upper()
+        time_period = time_period.upper()
+
+        if rank_by.lower() == 'profit':
+            order_by = 'PNL'
+        elif rank_by.lower() == 'volume':
+            order_by = 'VOL'
+
+        user = single_user_check if user_identifier == 'address' else None
+        username = single_user_check if user_identifier == 'username' else None
+
+        params = {
+            "category": category,
+            "timePeriod": time_period,
+            "orderBy": order_by,
+            "user": user,
+            "username": username,
+            "limit": limit
+        }
+
+        if get_all_data:
+            return self._call_api_get_all_responses(url, limit, params, True)
+        else:
+            response = self._call_api(url, params=params)
+            if response['statusCode'] != 200:
+                print(f"Error fetching leaderboards: {response['statusCode']}")
+                return []
+            return response['data']
