@@ -2,8 +2,8 @@ from lukhed_basic_utils import osCommon as osC
 from lukhed_basic_utils import requestsCommon as rC
 from lukhed_basic_utils import timeCommon as tC
 from lukhed_basic_utils import listWorkCommon as lC
-from lukhed_basic_utils.githubCommon import KeyManager
-from typing import Optional
+from lukhed_basic_utils import fileCommon as fC
+from lukhed_basic_utils.classCommon import LukhedAuth
 import base64
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -11,29 +11,49 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
 import datetime
 
-class Kalshi:
-    def __init__(self, api_delay='basic', kalshi_setup=False):
+class Kalshi(LukhedAuth):
+    def __init__(self, api_delay='basic', key_management='github'):
+        """
+        Kalshi API Wrapper with authentication handling.
+
+        Parameters
+        ----------
+        api_delay : str, optional
+            The type of account you have with Kalshi: basic, advanced, premier, or prime, by default 'basic'
+            This determines the rate limits (delays) for API calls.
+        key_management : str, optional
+            Options for storing your authentication data. 'local' to store your auth on your local hardware. 
+            'github' to store it in a private GitHub repository (you will need a GitHub account and GitHub token),
+            by default 'github'
+        """
+        super().__init__('kalshiApi', key_management=key_management)
         
-        
+        if self._auth_data is None:
+            print("No existing Kalshi API key data found, starting setup...")
+            self._kalshi_api_setup()
+
+        self._check_dl_private_key_file()
+
+
         self.read_delay = None
         self.write_delay = None
         self._set_api_delays(api_delay)
         self.base_url = 'https://api.elections.kalshi.com'
 
-        # Setup
-        if kalshi_setup:
-            self._kalshi_api_setup()
-
-
-        # Access Data
-        self.kM = None                              # type: Optional[KeyManager]
-        self._token_file_path = osC.create_file_path_string(['lukhedConfig', 'localTokenFile.json'])
-        self._private_key_path = None
-        self._key = None
-        self._private_key = None
-        self._check_create_km()
-
         self._check_exchange_status()
+
+    def _check_dl_private_key_file(self):
+        """
+        Kalshi uses a private key in addition to api key. This ensures it is downloaded appropriately based on 
+        prior setups.
+        """
+        key_file_name = self._auth_data['privateKeyFileName']
+        fp = osC.append_to_dir(self.kM._default_local_config, key_file_name)
+        if osC.check_if_file_exists(fp):
+            pass
+        else:
+            key_data = self.kM.retrieve_file_content(key_file_name).decode('utf-8')
+            fC.write_content_to_file(fp, key_data)
 
     def _set_api_delays(self, plan):
         plan = plan.lower()
@@ -100,32 +120,12 @@ class Kalshi:
     def _check_exchange_status(self):
         r = self.get_exchange_status()
         print(r)
-
-    def _check_create_km(self):
-        if self.kM is None:
-            # get the key data previously setup
-            self.kM = KeyManager('kalshiApi', config_file_preference='local')
-            self._key = self.kM.key_data['key']
-            self._private_key_path = self.kM.key_data['privateKeyPath']
-            
-            with open(self._private_key_path, "rb") as key_file:
-                self._private_key = serialization.load_pem_private_key(
-                    key_file.read(),
-                    password=None,  # or provide a password if your key is encrypted
-                    backend=default_backend()
-                )
-
-    def _build_key_file(self):
-        full_key_data = {
-            "key": self._key,
-            "privateKeyPath": self._private_key_path,
-        }
-        return full_key_data
     
     def _kalshi_api_setup(self):
-        print("This is the lukhed setup for Kalshi API wrapper.\nIf you haven't already, you first need to setup a"
-              " Kalshi account (free) and generate api keys.\nThe data you provide in this setup will be stored on "
-              "your local device.\n\n"
+        print("\n\n***********************************\n" \
+        "This is the lukhed setup for Kalshi API wrapper.\nIf you haven't already, you first need to setup a"
+              f" Kalshi account (free) and generate api keys.\nThe data you provide in this setup will be stored based "
+              f"on your key management parameter ({self._key_management}).\n\n"
               "To continue, you need the following from Kalshi:\n"
                 "1. Key identifier (can be found on your key page here: https://kalshi.com/account/profile)\n"
                 "2. Private key file downloaded from Kalshi upon creation of key\n"
@@ -137,16 +137,41 @@ class Kalshi:
             print("OK, come back when you have setup your developer account")
             quit()
 
-        self._key = input("Paste your key identifier here (found in Kalshi API keys secion "
-                          "https://kalshi.com/account/profile):\n").replace(" ", "")
-        key_fn = input("Write the name of your private key file downloaded from kalshi upon key creation"
+        identifier_key = input("Paste your key identifier here (found in Kalshi API keys secion "
+                               "https://kalshi.com/account/profile):\n").replace(" ", "")
+        
+        key_fn = input(f"Place your private key file downloaded from Kalshi into the following directory:\n"
+                       f"{self.kM.github_config_dir} and write the full name of your private key file "
                        " here (e.g., key.txt):\n")
-        self._private_key_path = osC.create_file_path_string(['lukhedConfig', key_fn])
-        key_data = self._build_key_file()
+        
+        private_key_path = osC.create_file_path_string(['lukhedConfig', key_fn])
+        if osC.check_if_file_exists(private_key_path):
+            pass
+        else:
+            input(f"\n\nERROR: The file path {private_key_path} does not exist. Please make sure you have "
+                  f"placed {key_fn} in the lukhedConfig folder.\n\n"
+                  "Press enter to try again.")
+            if osC.check_if_file_exists(private_key_path):
+                pass
+            else:
+                print("File still not found, exiting setup.")
+                quit()
+
+        print("Setting up Kalshi API key data...")
+        self._auth_data = {
+            "key": identifier_key,
+            "privateKeyFileName": key_fn,
+        }
+        self.kM.force_update_key_data(self._auth_data)
         tC.sleep(1)
-        self.kM = KeyManager('kalshiApi', config_file_preference='local', provide_key_data=key_data, force_setup=True)
-        input(f"\n\nFINAL STEP: Copy your private key file here: {self._private_key_path}\n\n"
-              "Press enter when you are ready to continue")
+        if self._key_management == 'github':
+            print("Uploading private key file to your GitHub account...")
+            private_key_content = fC.read_file_content(private_key_path)
+            self.kM.create_update_file(key_fn, private_key_content, 'created with lukhed basic utils for Kalshi API')
+
+        print("Setup complete!")
+        
+
 
         print("\n\nThe Kalshi portion is complete! Now setting up key management with lukhed library...")
         
@@ -168,7 +193,8 @@ class Kalshi:
     #################################
     # Naive Wrapper Functions
     #################################
-    def get_markets(self, limit=100, cursor=None, event_ticker=None, series_ticker=None, max_close_ts=None, min_close_ts=None, status=None, tickers=None, return_raw_data=False):
+    def get_markets(self, limit=1000, cursor=None, event_ticker=None, series_ticker=None, max_close_ts=None, 
+                    min_close_ts=None, status=None, tickers=None, return_raw_data=False):
         """
         Endpoint for getting data about all markets
         https://trading-api.readme.io/reference/getmarkets-1
@@ -176,7 +202,7 @@ class Kalshi:
         Parameters
         ----------
         limit : int, optional
-            1 to 1000, Parameter to specify the number of results per page. Defaults to 100.
+            1 to 1000, Parameter to specify the number of results per page. Defaults to 1000 (max).
         cursor : str, optional
             The Cursor represents a pointer to the next page of records in the pagination. So this optional parameter, 
             when filled, should be filled with the cursor string returned in a previous request to this end-point.
@@ -423,6 +449,56 @@ class Kalshi:
         r = self._call_kalshi_non_auth(url, params=params)
         return r
 
+    def get_market_spread(self, ticker, depth=None):
+        """
+        Calculate the bid-ask spread for a market using the order book.
+
+        Parameters
+        ----------
+        ticker : str
+            Market ticker.
+        depth : int, optional
+            Depth of the order book to consider.
+
+        Returns
+        -------
+        dict
+            Spread information: {'yes_spread': float, 'no_spread': float, 'best_yes_bid': int, 'best_yes_ask': int, 'best_no_bid': int, 'best_no_ask': int}
+        """
+        orderbook = self.get_market_orderbook(ticker, depth=depth)
+        
+        yes_orders = orderbook['orderbook']['yes']
+        no_orders = orderbook['orderbook']['no']
+        
+        if not yes_orders or not no_orders:
+            return {'yes_spread': None, 'no_spread': None, 'best_yes_bid': None, 'best_yes_ask': None, 'best_no_bid': None, 'best_no_ask': None}
+        
+        # Best YES bid: Highest price in the yes array (best to sell yes)
+        best_yes_bid = max(order['price'] for order in yes_orders)
+        
+        # Best YES ask: 100 - (Highest price in the no array)  [highest NO bid]
+        best_no_bid = max(order['price'] for order in no_orders)
+        best_yes_ask = 100 - best_no_bid
+        
+        yes_spread = best_yes_ask - best_yes_bid
+        
+        # Best NO bid: Highest price in the no array
+        best_no_bid = best_no_bid
+        
+        # Best NO ask: 100 - (Highest price in the yes array)  [highest YES bid]
+        best_no_ask = 100 - best_yes_bid
+        
+        no_spread = best_no_ask - best_no_bid
+        
+        return {
+            'yes_spread': yes_spread,
+            'no_spread': no_spread,
+            'best_yes_bid': best_yes_bid,
+            'best_yes_ask': best_yes_ask,
+            'best_no_bid': best_no_bid,
+            'best_no_ask': best_no_ask
+        }
+
     def get_exchange_announcements(self):
         """
         Endpoint for getting all exchange-wide announcements
@@ -528,6 +604,39 @@ class Kalshi:
         url = f'https://api.elections.kalshi.com/trade-api/v2/milestones/{milestone_id}'
         r = self._call_kalshi_non_auth(url)
         return r
+    
+    def get_tags_for_series_categories(self):
+        """
+        This endpoint returns a mapping of series categories to their associated tags, which can be used for 
+        filtering and search functionality.
+        https://docs.kalshi.com/api-reference/search/get-tags-for-series-categories
+
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+
+        url = f'https://api.elections.kalshi.com/trade-api/v2/search/tags_by_categories'
+        r = self._call_kalshi_non_auth(url)
+        return r["tags_by_categories"]
+    
+    def get_filters_by_sport(self):
+        """
+        This endpoint returns filtering options available for each sport, including scopes and competitions. 
+        It also provides an ordered list of sports for display purposes.
+        https://docs.kalshi.com/api-reference/search/get-filters-by-sport
+
+        Returns
+        -------
+        dict
+            Mapping of sports to their associated filters
+        """
+
+        url = f'https://api.elections.kalshi.com/trade-api/v2/search/filters_by_sport'
+        r = self._call_kalshi_non_auth(url)
+        return r
 
     #################################
     # Custom Wrapper Functions
@@ -585,10 +694,54 @@ class Kalshi:
         
         return all_events
 
+
+    #################################
+    # Custom Series
+    #################################
+    def get_economics_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?category=Economics'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_inflation_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=Inflation'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_fed_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=Fed'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_nasdaq_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=Nasdaq'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_sp500_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=S%26P'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_treasuries_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=Treasuries'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_wti_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=WTI'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
+    def get_btc_series(self):
+        url = 'https://api.elections.kalshi.com/trade-api/v2/series?tags=BTC'
+        r = self._call_kalshi_non_auth(url)
+        return r['series']
+    
     #################################
     # Custom Stocks
     #################################
-    def get_sp500_year_end_range_markets(self, active_only=False):
+    def get_sp500_year_end_range_markets(self, active_only=False, force_year=None):
         """
         Get all SP500 year end range markets.
 
@@ -596,14 +749,32 @@ class Kalshi:
         ----------
         active_only : bool, optional
             Only return active markets, by default False
-
+        force_year : int, optional
+            Force a specific year for the markets, by default None
         Returns
         -------
         list
             List of SP500 year end range markets.
         """
-        event = f'KXINXY-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}DEC31'
-        event_data = self.get_event(event, with_nested_markets=True)
+        year = int(tC.get_current_year()) if force_year is None else force_year
+        series = self.get_sp500_series()
+        yearly_range_series = [x for x in series if 'yearly range' in x['title'].lower()]
+        applicable_events = []
+        for series in yearly_range_series:
+            ticker = series['ticker']
+            events = self.get_events(series_ticker=ticker)
+            applicable_events.extend([x for x in events['events'] if 
+                                      tC.convert_non_python_format(x['strike_date'])['year'] == 
+                                      year])
+            
+        if len(applicable_events) == 1:
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        elif len(applicable_events) > 1:
+            print("Warning: Multiple applicable events found, using the first one.")
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        else:
+            print("ERROR: No applicable events found for SP500 yearly range markets.")
+            return []
 
         try:
             return event_data['error']
@@ -613,22 +784,41 @@ class Kalshi:
         markets = event_data['event']['markets']
         return self._parse_active_only_markets(markets, active_only)
     
-    def get_nasdaq_year_end_range_markets(self, active_only=False):
+    def get_nasdaq_year_end_range_markets(self, active_only=False, force_year=None):
         """
-        Get all NASDAQ year end range markets.
+        Get all Nasdaq year end range markets.
 
         Parameters
         ----------
         active_only : bool, optional
             Only return active markets, by default False
+        force_year : int, optional
+            Force a specific year for the markets, by default None
 
         Returns
         -------
         list
-            List of NASDAQ year end range markets.
+            List of Nasdaq year end range markets.
         """
-        event = f'KXNASDAQ100Y-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}DEC31'
-        event_data = self.get_event(event, with_nested_markets=True)
+        year = int(tC.get_current_year()) if force_year is None else force_year
+        series = self.get_nasdaq_series()
+        yearly_range_series = [x for x in series if 'yearly range' in x['title'].lower()]
+        applicable_events = []
+        for series in yearly_range_series:
+            ticker = series['ticker']
+            events = self.get_events(series_ticker=ticker)
+            applicable_events.extend([x for x in events['events'] if 
+                                      tC.convert_non_python_format(x['strike_date'])['year'] == 
+                                      year])
+            
+        if len(applicable_events) == 1:
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        elif len(applicable_events) > 1:
+            print("Warning: Multiple applicable events found, using the first one.")
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        else:
+            print("ERROR: No applicable events found for Nasdaq yearly range markets.")
+            return []
 
         try:
             return event_data['error']
@@ -638,26 +828,44 @@ class Kalshi:
         markets = event_data['event']['markets']
         return self._parse_active_only_markets(markets, active_only)
         
+        
     
     #################################
     # Custom Crypto
     #################################
-    def get_bitcoin_yearly_high_markets(self, active_only=False):
+    def get_bitcoin_yearly_high_markets(self, active_only=False, force_year=None):
         """
-        Get all bitcoin yearly high markets.
+        Get all Bitcoin yearly high markets.
 
         Parameters
         ----------
         active_only : bool, optional
             Only return active markets, by default False
+        force_year : int, optional
+            Force a specific year for the markets, by default None
 
         Returns
         -------
         list
-            List of bitcoin yearly high markets.
+            List of Bitcoin yearly max markets.
         """
-        event = f'KXBTCMAXY-{tC.convert_date_format(tC.get_current_year(), '%Y', '%y')}'
-        event_data = self.get_event(event, with_nested_markets=True)
+        series = self.get_btc_series()
+        yearly_max_series = [x for x in series if 'how high will bitcoin get this year' in x['title'].lower()]
+        applicable_events = []
+        for series in yearly_max_series:
+            ticker = series['ticker']
+            events = self.get_events(series_ticker=ticker)
+            applicable_events.extend([x for x in events['events'] if 
+                                      'before dec 31, 2026' in x['sub_title'].lower()])
+            
+        if len(applicable_events) == 1:
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        elif len(applicable_events) > 1:
+            print("Warning: Multiple applicable events found, using the first one.")
+            event_data = self.get_event(applicable_events[0]['event_ticker'], with_nested_markets=True)
+        else:
+            print("ERROR: No applicable events found for Bitcoin year end range markets.")
+            return []
 
         try:
             return event_data['error']
@@ -666,6 +874,7 @@ class Kalshi:
 
         markets = event_data['event']['markets']
         return self._parse_active_only_markets(markets, active_only)
+        
         
     
     #################################
