@@ -1,7 +1,6 @@
 from lukhed_basic_utils import timeCommon as tC
 from lukhed_basic_utils import requestsCommon as rC
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import BookParams
 from .polymarket_tags import TAG_MAPPING
 import json
 
