@@ -212,7 +212,7 @@ class Polymarket:
     
     
     ###############################
-    # Search Enablement Methods
+    # Tags
     ###############################
     def get_tags(self, get_all_data=True):
         """
@@ -240,4 +240,47 @@ class Polymarket:
                 print(f"Error fetching tags: {response['statusCode']}")
                 return []
             return response['data']
+        
+    def get_tag_by_id(self, tag_id):
+        """
+        Gets tag data for a given tag ID from the Polymarket Gamma API.
+
+        Parameters
+        ----------
+        tag_id : string
+            Tag ID to retrieve
+        Returns
+        -------
+        dict
+            Tag data
+        """
+        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/tags/{tag_id}')
+        if response['statusCode'] != 200:
+            print(f"Error fetching tag: {response['statusCode']}")
+            return None
+        return response['data']
+        
+    def get_related_tags(self, tag, tag_id=False):
+        """
+        Gets related tags for a given tag from the Polymarket Gamma API.
+
+        Parameters
+        ----------
+        tag : string
+            Tag label to find related tags for
+        tag_id : bool, optional
+            Whether or not the provided tag is a tag ID, by default False
+        Returns
+        -------
+        list
+            List of related tags
+        """
+        if not tag_id:
+            tag = self._parse_tag(tag)
+        
+        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/tags/{tag}/related-tags/tags')
+        if response['statusCode'] != 200:
+            print(f"Error fetching related tags: {response['statusCode']}")
+            return []
+        return response['data']
     
