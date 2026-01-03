@@ -84,7 +84,7 @@ class Polymarket:
     
         return all_data
 
-    def get_markets(self, get_all_data=True, include_closed=False, tag_filter=None):
+    def get_markets(self, get_all_data=True, include_closed=False, active_only=True, tag_filter=None):
         """
         Gets a list of markets from the Polymarket Gamma API.
 
@@ -107,7 +107,8 @@ class Polymarket:
         tag_filter = self._parse_tag(tag_filter)
         params = {
             "limit": 500, # Max limit per request
-            "closed": include_closed if not include_closed else None,
+            "closed": include_closed if include_closed else None,
+            "active": active_only if active_only else None,
             "tag_id": tag_filter
             }
         
@@ -123,7 +124,7 @@ class Polymarket:
             
             return response['data']
     
-    def get_events(self, tag=None, include_closed=False, get_all_data=True):
+    def get_events(self, tag=None, include_closed=False, active_only=True, get_all_data=True):
         """
         Gets a list of events from the Polymarket Gamma API.
 
@@ -144,7 +145,8 @@ class Polymarket:
         params = {
             "limit": 500,  # Max limit per request
             "tag_id": tag,
-            "closed": include_closed
+            "closed": include_closed if include_closed else None,
+            "active": active_only if active_only else None
         }
         url = 'https://gamma-api.polymarket.com/events'
         
