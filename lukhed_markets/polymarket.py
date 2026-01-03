@@ -68,14 +68,15 @@ class Polymarket:
         all_data = []
         offset = 0
         
+        print("Fetching all paginated data from API...")
         while True:
             params['limit'] = limit
             params['offset'] = offset
             
-            if print_progress and offset % (limit * 10) == 0:
-                print(f"Fetching data with offset {offset} and limit {limit}")
-            
             response = self._call_api(url, params=params)
+
+            if print_progress and offset % (limit * 10) == 0:
+                print(f"Completed fetching data with offset {offset} and limit {limit}. Continuing...")
             
             if response['statusCode'] != 200:
                 print(f"Error fetching markets: {response['statusCode']}")
@@ -134,7 +135,7 @@ class Polymarket:
         tag_filter = self._parse_tag(tag_filter)
         params = {
             "limit": 500, # Max limit per request
-            "closed": include_closed if include_closed else None,
+            "closed": include_closed if not include_closed else None,
             "active": active_only if active_only else None,
             "tag_id": tag_filter
             }
@@ -155,7 +156,8 @@ class Polymarket:
     ##############################
     # Event Methods
     ##############################
-    def get_events(self, tag=None, include_closed=False, active_only=True, get_all_data=True):
+    def get_events(self, tag=None, include_closed=False, active_only=True, get_all_data=True, order_by=None, 
+                   ascending=True):
         """
         Gets a list of events from the Polymarket Gamma API.
 
@@ -167,6 +169,10 @@ class Polymarket:
             Whether or not to include closed events, by default False
         get_all_data : bool, optional
             Whether or not to return all pages of data, by default True
+        order_by : str, optional
+            Comma-separated list of fields to order by.
+        ascending : bool, optional
+            Whether to order in ascending order, by default True
         Returns
         -------
         list
@@ -176,8 +182,10 @@ class Polymarket:
         params = {
             "limit": 500,  # Max limit per request
             "tag_id": tag,
-            "closed": include_closed if include_closed else None,
-            "active": active_only if active_only else None
+            "closed": include_closed,
+            "active": active_only,
+            "order_by": order_by,
+            "ascending": ascending
         }
         url = 'https://gamma-api.polymarket.com/events'
         
