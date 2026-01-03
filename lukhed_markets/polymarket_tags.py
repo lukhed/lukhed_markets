@@ -6,4 +6,5 @@ This file contains the mapping of human-readable tag names to their correspondin
 TAG_MAPPING = {
     'us election': '1101',
     'bitcoin': '235',
+    'sports': '1'
 }

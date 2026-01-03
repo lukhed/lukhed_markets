@@ -7,17 +7,20 @@ import json
 
 class Polymarket:
     """
-    This class wraps the polymarket gamma API and adds custom discovery methods for convenience. It also allows access 
-    to py-clob-client via self.clob_api.
+    This class wraps the polymarket gamma and data APIs and adds custom discovery methods for convenience. 
+    It also allows access to py-clob-client via self.clob_api for the clob API.
 
     clob_api documentation: https://github.com/Polymarket/py-clob-client
     gamma_api documentation: https://docs.polymarket.com/developers/gamma-markets-api/overview
+    data_api documentation: https://docs.polymarket.com/developers/data-api/overview
     """
     def __init__(self, api_delay=0.1):
         self.delay = api_delay
         self.clob_api = ClobClient("https://clob.polymarket.com")
         self.gamma_url = 'https://gamma-api.polymarket.com'
+        self.data_url = 'https://data.polymarket.com'
         print("gamma api status:", self.get_gamma_status())
+        print("data api status:", self.get_data_status())
 
     def _parse_api_delay(self, rate_limit=None):
         """
@@ -47,7 +50,7 @@ class Polymarket:
             print(f'Warning: Tag "{tag}" not recognized')
             return None
         
-    def _call_gamma_api(self, url, params=None, rate_limit_tuple=None):
+    def _call_api(self, url, params=None, rate_limit_tuple=None):
         response = rC.make_request(url, params=params)
         try:
             data = json.loads(response.text)
@@ -61,7 +64,7 @@ class Polymarket:
         }
         return response_data
     
-    def _get_all_responses(self, url, limit, params, print_progress=False):
+    def _call_api_get_all_responses(self, url, limit, params, print_progress=False):
         all_data = []
         offset = 0
         
@@ -72,7 +75,7 @@ class Polymarket:
             if print_progress and offset % (limit * 10) == 0:
                 print(f"Fetching data with offset {offset} and limit {limit}")
             
-            response = self._call_gamma_api(url, params=params)
+            response = self._call_api(url, params=params)
             
             if response['statusCode'] != 200:
                 print(f"Error fetching markets: {response['statusCode']}")
@@ -95,6 +98,14 @@ class Polymarket:
             print(f"Error fetching status: {response.status_code}")
             return None
         return response.text
+    
+    def get_data_status(self):
+        url = 'https://data-api.polymarket.com/'
+        try:
+            response = rC.request_json(url)['data']
+            return response
+        except Exception as e:
+            return f"Status error : {e}"
 
 
     ###############################
@@ -131,9 +142,9 @@ class Polymarket:
         url = 'https://gamma-api.polymarket.com/markets'
 
         if get_all_data:
-            return self._get_all_responses(url, 500, params, True)
+            return self._call_api_get_all_responses(url, 500, params, True)
         else:
-            response = self._call_gamma_api(url, params=params)
+            response = self._call_api(url, params=params)
             if response['statusCode'] != 200:
                 print(f"Error fetching markets: {response['statusCode']}")
                 return []
@@ -171,16 +182,16 @@ class Polymarket:
         url = 'https://gamma-api.polymarket.com/events'
         
         if get_all_data:
-            return self._get_all_responses(url, 500, params, True)
+            return self._call_api_get_all_responses(url, 500, params, True)
         else:
-            response = self._call_gamma_api(url, params=params)
+            response = self._call_api(url, params=params)
             if response['statusCode'] != 200:
                 print(f"Error fetching events: {response['statusCode']}")
                 return []
             return response['data']
         
     def get_event_by_id(self, event_id):
-        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/events/{event_id}')
+        response = self._call_api(f'https://gamma-api.polymarket.com/events/{event_id}')
         if response['statusCode'] != 200:
             print(f"Error fetching event: {response['statusCode']}")
             return None
@@ -204,7 +215,7 @@ class Polymarket:
         dict
             Event data for the given slug.
         """
-        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/events/slug/{event_slug}')
+        response = self._call_api(f'https://gamma-api.polymarket.com/events/slug/{event_slug}')
         if response['statusCode'] != 200:
             print(f"Error fetching event: {response['statusCode']}")
             return None
@@ -233,9 +244,9 @@ class Polymarket:
         url = 'https://gamma-api.polymarket.com/tags'
         
         if get_all_data:
-            return self._get_all_responses(url, 300, params, True)
+            return self._call_api_get_all_responses(url, 300, params, True)
         else:
-            response = self._call_gamma_api(url, params=params)
+            response = self._call_api(url, params=params)
             if response['statusCode'] != 200:
                 print(f"Error fetching tags: {response['statusCode']}")
                 return []
@@ -254,7 +265,7 @@ class Polymarket:
         dict
             Tag data
         """
-        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/tags/{tag_id}')
+        response = self._call_api(f'https://gamma-api.polymarket.com/tags/{tag_id}')
         if response['statusCode'] != 200:
             print(f"Error fetching tag: {response['statusCode']}")
             return None
@@ -278,9 +289,57 @@ class Polymarket:
         if not tag_id:
             tag = self._parse_tag(tag)
         
-        response = self._call_gamma_api(f'https://gamma-api.polymarket.com/tags/{tag}/related-tags/tags')
+        response = self._call_api(f'https://gamma-api.polymarket.com/tags/{tag}/related-tags/tags')
         if response['statusCode'] != 200:
             print(f"Error fetching related tags: {response['statusCode']}")
             return []
         return response['data']
+    
+    def list_comments(self, entity_type, entity_id, get_positions=True, get_all_data=True, ascending=True, 
+                      holders_only=False):
+        """
+        Gets comments for a given entity type (series, event, or market)
+
+        Parameters
+        ----------
+        entity_type : str
+            The type of entity to get comments for (e.g., "Series", "Event", or "Market").
+        entity_id : str
+            The ID of the entity to get comments for.
+        get_positions : bool, optional
+            Whether to include position data in the comments, by default True
+        get_all_data : bool, optional
+            Whether to retrieve all pages of comments, by default True
+        ascending : bool, optional
+            Whether to sort comments in ascending order, by default True
+        holders_only : bool, optional
+            Whether to include only comments from holders, by default False
+        Returns
+        -------
+        list
+            List of comments
+        """
+
+        # ensure entity_type is singular and capitalized
+        entity_type = entity_type[0].capitalize() + entity_type[1:]
+
+        url = 'https://gamma-api.polymarket.com/comments'
+        limit = 100
+        params = {
+            "limit": limit,
+            "parent_entity_type": entity_type,
+            "parent_entity_id": entity_id,
+            "get_positions": get_positions,
+            "ascending": ascending,
+            "holders_only": holders_only
+        }
+
+        if get_all_data:
+            return self._call_api_get_all_responses(url, limit, params, True)
+        else:
+            response = self._call_api(url, params=params)
+            if response['statusCode'] != 200:
+                print(f"Error fetching comments: {response['statusCode']}")
+                return []
+            return response['data']
     
