@@ -412,3 +412,24 @@ class Polymarket:
                 print(f"Error fetching leaderboards: {response['statusCode']}")
                 return []
             return response['data']
+        
+    def get_user_activity(self, address, activity_type_list=["TRADE"], side=None, get_all_data=False):
+        limit = 5
+        params = {
+            "user": address,
+            "limit": limit,  # Max limit per request
+            "type": ','.join(activity_type_list),
+            "sortBy": "TIMESTAMP",
+            "sortDirection": "DESC",
+            "side": side.upper() if side else None
+        }
+        url = f'https://data-api.polymarket.com/activity'
+
+        if get_all_data:
+            return self._call_api_get_all_responses(url, limit, params, True)
+        else:
+            response = self._call_api(url, params=params)
+            if response['statusCode'] != 200:
+                print(f"Error fetching events: {response['statusCode']}")
+                return []
+            return response['data']
