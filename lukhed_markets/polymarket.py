@@ -91,6 +91,14 @@ class Polymarket:
     
         return all_data
 
+    def _parse_date_inputs(self, start_date=None, end_date=None, date_format="%Y-%m-%d"):
+        if start_date:
+            start_date = tC.convert_to_unix(start_date, date_format=date_format)
+        if end_date:
+            end_date = tC.convert_to_unix(end_date, date_format=date_format)
+
+        return start_date, end_date
+    
     def get_gamma_status(self):
         url = 'https://gamma-api.polymarket.com/status'
         response = rC.make_request(url)
@@ -413,7 +421,16 @@ class Polymarket:
                 return []
             return response['data']
         
-    def get_user_activity(self, address, activity_type_list=["TRADE"], side=None, get_all_data=False):
+    def get_user_activity(self, address, activity_type_list=["TRADE"], side=None, get_all_data=False, 
+                          start_date=None, end_date=None, date_format="%Y-%m-%d"):
+        start_date, end_date = self._parse_date_inputs(start_date, end_date, date_format=date_format)
+        
+        # working timestamp conversion test
+        utc_tz = tC.ZoneInfo("UTC")
+        utc_dt = tC.datetime.fromtimestamp(1767664039, tz=utc_tz)
+        eastern_tz = tC.ZoneInfo("America/New_York")
+        eastern_dt = utc_dt.astimezone(eastern_tz)
+        
         limit = 5
         params = {
             "user": address,
