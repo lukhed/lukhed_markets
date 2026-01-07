@@ -93,12 +93,28 @@ class Polymarket:
 
     def _parse_date_inputs(self, start_date=None, end_date=None, date_format="%Y-%m-%d"):
         if start_date:
-            start_date = tC.convert_to_unix(start_date, date_format=date_format)
+            start_date = tC.convert_to_unix(start_date, from_format=date_format)
         if end_date:
-            end_date = tC.convert_to_unix(end_date, date_format=date_format)
+            end_date = tC.convert_to_unix(end_date, from_format=date_format)
 
         return start_date, end_date
     
+    def _add_date_times(self, data):
+        # working timestamp conversion test
+        utc_tz = tC.ZoneInfo("UTC")
+        est_tz = tC.ZoneInfo('America/New_York')
+
+        for item in data:
+            ts = item.get('timestamp', None)
+            if ts:
+                utc_dt = tC.datetime.fromtimestamp(ts, tz=utc_tz)
+                eastern_dt = utc_dt.astimezone(est_tz)
+                item['est'] = eastern_dt
+                item['utc'] = utc_dt
+
+        return data
+
+        
     def get_gamma_status(self):
         url = 'https://gamma-api.polymarket.com/status'
         response = rC.make_request(url)
@@ -422,31 +438,63 @@ class Polymarket:
             return response['data']
         
     def get_user_activity(self, address, activity_type_list=["TRADE"], side=None, get_all_data=False, 
-                          start_date=None, end_date=None, date_format="%Y-%m-%d"):
+                          start_date=None, end_date=None, date_format="%Y-%m-%d", add_datetime=True):
+        """
+        Get user activity from the Polymarket Data API.
+
+        Parameters
+        ----------
+        address : str
+            The user's address to fetch activity for.
+        activity_type_list : list, optional
+            List of activity types to filter by (TRADE, SPLIT, MERGE, REDEEM, REWARD, CONVERSION), 
+            by default ["TRADE"]
+        side : str, optional
+            Side of the trade to filter by (e.g., "BUY" or "SELL"), by default None
+        get_all_data : bool, optional
+            Whether to retrieve all pages of user activity data, by default False
+        start_date : str, optional
+            Start date for filtering activity, by default None
+        end_date : str, optional
+            End date for filtering activity, by default None
+        date_format : str, optional
+            Format of the start and end date strings, by default "%Y-%m-%d"
+        add_datetime : bool, optional
+            Whether to add datetime fields to the returned data, by default True
+
+        Returns
+        -------
+        list
+            List of user activity records
+        """
         start_date, end_date = self._parse_date_inputs(start_date, end_date, date_format=date_format)
-        
-        # working timestamp conversion test
-        utc_tz = tC.ZoneInfo("UTC")
-        utc_dt = tC.datetime.fromtimestamp(1767664039, tz=utc_tz)
-        eastern_tz = tC.ZoneInfo("America/New_York")
-        eastern_dt = utc_dt.astimezone(eastern_tz)
-        
-        limit = 5
+        limit = 500 # Max limit per request
         params = {
             "user": address,
-            "limit": limit,  # Max limit per request
+            "limit": limit,  
             "type": ','.join(activity_type_list),
             "sortBy": "TIMESTAMP",
             "sortDirection": "DESC",
+            "start": start_date,
+            "end": end_date,
             "side": side.upper() if side else None
         }
         url = f'https://data-api.polymarket.com/activity'
 
         if get_all_data:
-            return self._call_api_get_all_responses(url, limit, params, True)
+            data = self._call_api_get_all_responses(url, limit, params, True)
         else:
             response = self._call_api(url, params=params)
             if response['statusCode'] != 200:
                 print(f"Error fetching events: {response['statusCode']}")
                 return []
-            return response['data']
+            else:
+                data = response['data']
+            
+        if add_datetime:
+            data = self._add_date_times(data)
+            return data
+
+        return data
+    
+    
