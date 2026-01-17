@@ -1,13 +1,85 @@
+from xmlrpc import client
 from lukhed_basic_utils import timeCommon as tC
 from lukhed_basic_utils import requestsCommon as rC
+from lukhed_basic_utils.classCommon import LukhedAuth
 from py_clob_client.client import ClobClient
 from .polymarket_tags import TAG_MAPPING
 import json
+import time
+import threading
+from websocket import WebSocketApp
+
+
+class MarketWebSocket:
+    """
+    Websocket connection to Polymarket's public market channel.
+    Does NOT require authentication.
+    """
+    def __init__(self, url, asset_ids, message_callback):
+        self.url = url
+        self.asset_ids = asset_ids
+        self.message_callback = message_callback
+        
+        furl = url + "/ws/market"
+        self.ws = WebSocketApp(
+            furl,
+            on_message=self.on_message,
+            on_error=self.on_error,
+            on_close=self.on_close,
+            on_open=self.on_open,
+        )
+    
+    def on_message(self, ws, message):
+        try:
+            if message != "PONG":
+                data = json.loads(message)
+                if self.message_callback:
+                    self.message_callback(data)
+                else:
+                    print(f"Market update: {json.dumps(data, indent=2)}")
+        except Exception as e:
+            print(f"Error processing message: {e}")
+    
+    def on_error(self, ws, error):
+        print(f"WebSocket error: {error}")
+    
+    def on_close(self, ws, close_status_code, close_msg):
+        print(f"WebSocket closed: {close_status_code} - {close_msg}")
+    
+    def on_open(self, ws):
+        print(f"WebSocket connected. Monitoring {len(self.asset_ids)} asset(s)...")
+        ws.send(json.dumps({"assets_ids": self.asset_ids, "type": "market"}))
+        
+        # Start ping thread
+        def ping_loop():
+            while True:
+                try:
+                    ws.send("PING")
+                    time.sleep(10)
+                except:
+                    break
+        
+        ping_thread = threading.Thread(target=ping_loop, daemon=True)
+        ping_thread.start()
+    
+    def subscribe_to_assets(self, new_asset_ids):
+        """Subscribe to additional assets"""
+        self.ws.send(json.dumps({"assets_ids": new_asset_ids, "operation": "subscribe"}))
+        print(f"Subscribed to {len(new_asset_ids)} additional asset(s)")
+    
+    def unsubscribe_from_assets(self, asset_ids_to_remove):
+        """Unsubscribe from specific assets"""
+        self.ws.send(json.dumps({"assets_ids": asset_ids_to_remove, "operation": "unsubscribe"}))
+        print(f"Unsubscribed from {len(asset_ids_to_remove)} asset(s)")
+    
+    def run(self):
+        self.ws.run_forever()
+
 
 class Polymarket:
     """
     This class wraps the polymarket gamma and data APIs and adds custom discovery methods for convenience. 
-    It also allows access to py-clob-client via self.clob_api for the clob API.
+    It does not require authentication for public data access.
 
     clob_api documentation: https://github.com/Polymarket/py-clob-client
     gamma_api documentation: https://docs.polymarket.com/developers/gamma-markets-api/overview
@@ -15,7 +87,6 @@ class Polymarket:
     """
     def __init__(self, api_delay=0.1):
         self.delay = api_delay
-        self.clob_api = ClobClient("https://clob.polymarket.com")
         self.gamma_url = 'https://gamma-api.polymarket.com'
         self.data_url = 'https://data.polymarket.com'
         print("gamma api status:", self.get_gamma_status())
@@ -594,3 +665,364 @@ class Polymarket:
                 print(f"Error fetching positions: {response['statusCode']}")
                 return []
             return response['data']
+    
+    
+    ###############################
+    # Websocket Methods
+    ###############################
+    def subscribe_to_markets(self, asset_ids, callback=None):
+        """
+        Subscribe to market updates via websocket for specific asset/token IDs.
+        Does NOT require authentication.
+        
+        Parameters
+        ----------
+        asset_ids : list
+            List of asset IDs (token IDs) to monitor
+        callback : callable, optional
+            Function to call when market updates are received.
+            Receives (message_data) as parameter.
+            
+        Returns
+        -------
+        MarketWebSocket
+            The websocket connection object
+            
+        Example
+        -------
+        def my_callback(data):
+            print(f"Market update: {data}")
+            
+        ws = pm.subscribe_to_markets(
+            asset_ids=["109681959945973300464568698402968596289258214226684818748321941747028805721376"],
+            callback=my_callback
+        )
+        """
+        ws_monitor = MarketWebSocket(
+            "wss://ws-subscriptions-clob.polymarket.com",
+            asset_ids,
+            callback
+        )
+        
+        # Run in separate thread
+        ws_thread = threading.Thread(target=ws_monitor.run, daemon=True)
+        ws_thread.start()
+        
+        return ws_monitor
+    
+    def monitor_market_for_whales(self, markets=None, asset_ids=None, min_trade_size=1000, 
+                                   min_trade_value=None, callback=None):
+        """
+        Monitor markets for large trades ("whale" activity) via websocket.
+        Does NOT require authentication - uses public market channel.
+        
+        This is ideal for tracking when big bets come into specific markets.
+        
+        Parameters
+        ----------
+        markets : list, optional
+            List of market slugs or condition IDs to monitor.
+        asset_ids : list, optional
+            List of specific asset IDs (token IDs) to monitor. 
+        min_trade_size : float, optional
+            Minimum number of shares for a trade to trigger callback, by default 1000
+        min_trade_value : float, optional
+            Minimum dollar value (size * price) for a trade to trigger callback.
+            If provided, overrides min_trade_size.
+        callback : callable, optional
+            Function called when a large trade is detected.
+            Receives (trade_data_dict) as parameter.
+            If not provided, prints trade details to console.
+            
+        Returns
+        -------
+        MarketWebSocket
+            The websocket connection object. Keeps running in background thread.
+            
+        Examples
+        --------
+        # Monitor for trades over $5000 on Trump market
+        ws = pm.monitor_market_for_whales(
+            markets=["will-donald-trump-be-elected-president-in-2024"],
+            min_trade_value=5000,
+            callback=lambda trade: print(f"🐋 Whale alert! {trade['side']} ${float(trade['size'])*float(trade['price']):.0f}")
+        )
+        
+        # Keep script running
+        import time
+        while True:
+            time.sleep(1)
+        """
+        # Get asset IDs if markets were provided
+        if asset_ids is None and markets is None:
+            raise ValueError("Must provide either 'markets' or 'asset_ids' parameter")
+        
+        if markets is not None:
+            # Fetch asset IDs for the specified markets
+            asset_ids = []
+            for market_identifier in markets:
+                # Try to get market by slug or condition_id
+                try:
+                    market_data = self.get_event_by_slug(market_identifier)
+                    if market_data and 'markets' in market_data:
+                        for market in market_data['markets']:
+                            if 'tokens' in market:
+                                for token in market['tokens']:
+                                    asset_ids.append(token['token_id'])
+                except:
+                    # If slug doesn't work, assume it's a condition_id
+                    markets_list = self.get_markets(get_all_data=False)
+                    for market in markets_list:
+                        if market.get('condition_id') == market_identifier:
+                            if 'tokens' in market:
+                                for token in market['tokens']:
+                                    asset_ids.append(token['token_id'])
+                            break
+            
+            if not asset_ids:
+                raise ValueError(f"Could not find asset IDs for markets: {markets}")
+            
+            print(f"🐋 Monitoring {len(asset_ids)} assets from {len(markets)} market(s) for large trades...")
+        else:
+            print(f"🐋 Monitoring {len(asset_ids)} assets for large trades...")
+        
+        def whale_filter_callback(data):
+            """Filter market messages for large trades"""
+            try:
+                if data.get('event_type') == 'trade' and data.get('status') == 'MATCHED':
+                    size = float(data.get('size', 0))
+                    price = float(data.get('price', 0))
+                    trade_value = size * price
+                    
+                    # Check if trade meets threshold
+                    is_whale = False
+                    if min_trade_value is not None:
+                        is_whale = trade_value >= min_trade_value
+                    else:
+                        is_whale = size >= min_trade_size
+                    
+                    if is_whale:
+                        if callback:
+                            callback(data)
+                        else:
+                            print(f"\n🐋 WHALE ALERT!")
+                            print(f"   Trade Value: ${trade_value:,.2f}")
+                            print(f"   Side: {data.get('side')}")
+                            print(f"   Size: {size:,.0f} shares")
+                            print(f"   Price: ${price:.3f}")
+                            print(f"   Market: {data.get('market')}")
+                            print(f"   Trader: {data.get('trade_owner', 'Unknown')[:10]}...")
+            except Exception as e:
+                print(f"Error filtering message: {e}")
+        
+        return self.subscribe_to_markets(asset_ids, whale_filter_callback)    
+    
+    def monitor_user_positions(self, address, poll_interval=60, callback=None):
+        """
+        Monitor a user's positions by polling the REST API periodically.
+        Does NOT require authentication.
+        
+        This is the RECOMMENDED way to track specific user activity (better than websockets).
+        You'll be notified when their positions change (new trades, exits, etc).
+        
+        Parameters
+        ----------
+        address : str
+            The public address of the user to monitor
+        poll_interval : int, optional
+            Seconds between checks, by default 60
+        callback : callable, optional
+            Function called when positions change.
+            Receives (address, positions_dict, changes_dict) as parameters.
+            
+        Returns
+        -------
+        threading.Thread
+            The monitoring thread running in background
+            
+        Example
+        -------
+        def position_changed(addr, positions, changes):
+            print(f"User {addr[:8]}... positions updated:")
+            print(f"  New positions: {len(changes.get('new', []))}")
+            print(f"  Changed positions: {len(changes.get('changed', []))}")
+            print(f"  Closed positions: {len(changes.get('closed', []))}")
+        
+        thread = pm.monitor_user_positions(
+            "0x123...",
+            poll_interval=30,
+            callback=position_changed
+        )
+        
+        # Keep running
+        import time
+        while True:
+            time.sleep(1)
+        """
+        def poll_loop():
+            last_positions = {}
+            print(f"📊 Monitoring positions for {address[:10]}... (polling every {poll_interval}s)")
+            
+            while True:
+                try:
+                    # Get current positions
+                    current_positions = self.get_current_positions_for_user(
+                        address, 
+                        size_threshold=0.01
+                    )
+                    
+                    # Build position map by market+outcome
+                    current_map = {}
+                    for pos in current_positions:
+                        key = f"{pos.get('market')}_{pos.get('outcome')}"
+                        current_map[key] = pos
+                    
+                    # Detect changes
+                    if last_positions:
+                        changes = {
+                            'new': [],
+                            'changed': [],
+                            'closed': []
+                        }
+                        
+                        # Check for new and changed positions
+                        for key, pos in current_map.items():
+                            if key not in last_positions:
+                                changes['new'].append(pos)
+                            elif pos.get('size') != last_positions[key].get('size'):
+                                changes['changed'].append({
+                                    'market': pos.get('market'),
+                                    'outcome': pos.get('outcome'),
+                                    'old_size': last_positions[key].get('size'),
+                                    'new_size': pos.get('size'),
+                                    'position': pos
+                                })
+                        
+                        # Check for closed positions
+                        for key, pos in last_positions.items():
+                            if key not in current_map:
+                                changes['closed'].append(pos)
+                        
+                        # Notify if there are changes
+                        if any(changes.values()):
+                            if callback:
+                                callback(address, current_positions, changes)
+                            else:
+                                print(f"\n📊 Position changes for {address[:10]}...")
+                                if changes['new']:
+                                    print(f"   ✅ {len(changes['new'])} new position(s)")
+                                if changes['changed']:
+                                    print(f"   📈 {len(changes['changed'])} position(s) changed")
+                                if changes['closed']:
+                                    print(f"   ❌ {len(changes['closed'])} position(s) closed")
+                    
+                    last_positions = current_map
+                    time.sleep(poll_interval)
+                    
+                except Exception as e:
+                    print(f"Error monitoring user positions: {e}")
+                    time.sleep(poll_interval)
+        
+        thread = threading.Thread(target=poll_loop, daemon=True)
+        thread.start()
+        return thread        
+
+class PolymarketAuth(Polymarket, LukhedAuth):
+    """
+    This class extends the Polymarket class to include the ability to use the clob API authenticated methods.
+    It requires setting up API key authentication via the LukhedAuth class.
+    Then use the clob client to make authenticated requests using self.api.
+
+    clob_api documentation:
+    https://github.com/Polymarket/py-clob-client
+    """
+    def __init__(self, api_delay=0.1, key_management='github'):
+        Polymarket.__init__(self, api_delay=api_delay)
+        LukhedAuth.__init__(self, project_name='polymarketClobApi', key_management=key_management)
+
+        if self._auth_data is None:
+            print("No existing Polymarket API key data found, starting setup...")
+            self._polymarket_api_setup()
+
+        # Initialize ClobClient based on signature type
+        if self._auth_data.get('signature_type', 1) == 0:
+            # Standard wallet (MetaMask/Hardware) - uses private key for signing
+            self.api = ClobClient(
+                "https://clob.polymarket.com",
+                key=self._auth_data['private_key'],  # Private key for signing
+                chain_id=137,
+                signature_type=0,
+                funder=self._auth_data['address']  # Address holding funds
+            )
+        elif self._auth_data.get('signature_type', 1) == 1:
+            # Magic wallet - uses API key for signing
+            self.api = ClobClient(
+                "https://clob.polymarket.com",
+                key=self._auth_data['key'],  # API key acts as the signing key
+                chain_id=137,
+                signature_type=1,
+                funder=self._auth_data['address']  # Proxy address holding funds
+            )
+        
+        # Derive API credentials for authenticated requests
+        self.api.set_api_creds(self.api.create_or_derive_api_creds())
+
+        ok = self.api.get_ok()
+        time = self.api.get_server_time()
+        print(ok, time)
+
+    def _polymarket_api_setup(self):
+        """
+        Sets up the Polymarket API key for authenticated requests.
+        """
+        
+        print("\n\n***********************************\n" \
+        "This is the lukhed setup for Polymarket API wrapper.\nIf you haven't already, you first need to setup a"
+              f" Polymarket account (free) and generate an api key.\nThe data you provide in this setup will be stored "
+              f"based on your key management parameter ({self._key_management}).\n\n"
+
+              "Polymarket supports two authentication methods:\n"
+                "1. Magic (Email) Wallet - Uses API key only\n"
+                "2. MetaMask/Hardware Wallet - Requires private key\n\n"
+
+               "Assuming option 1 (Magic wallet) setup, you need:\n"
+                "- API key from: https://reveal.magic.link/polymarket\n"
+                "- Your Polymarket proxy address (your public account address)\n\n"
+                
+                "General API help: https://docs.polymarket.com/quickstart/overview")
+            
+        if input("\n\nAre you ready to continue (y/n)?") != 'y':
+            print("OK, come back when you have setup your developer account")
+            quit()
+
+        wallet_type = input("\nAre you using a Magic (email) wallet? (y/n): ").lower()
+
+        if wallet_type == 'y':
+            print("\nFor Magic wallets, you only need your API key and proxy address.")
+            print("Your proxy address is your public Polymarket account address.\n\n")
+            signature_type = 1
+        else:
+            print("\nFor MetaMask/hardware wallets, you need your private key and wallet address.")
+            print("WARNING: lukhed auth stores your private key based on your key management settings. This means your " \
+            "private key will be stored as plain text on your local machine or private github repo. Ensure  " \
+            "you understand thesecurity implications of this before proceeding!\n\n")
+            signature_type = 0
+
+        key = input("Input your API key and press enter: ")
+        address = input("Input your Polymarket proxy address and press enter: ")
+        if signature_type == 0:
+            private_key = input("Input your private key and press enter: ")
+        else:
+            private_key = None
+
+        self._auth_data = {
+            "key": key,
+            "address": address,
+            "signature_type": signature_type,
+            "private_key": private_key
+        }
+
+        self.kM.force_update_key_data(self._auth_data)
+        print("Setup complete!")
+
+    
