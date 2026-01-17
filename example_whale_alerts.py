@@ -1,11 +1,3 @@
-"""
-Polymarket Whale Alerts - Monitor Markets for Large Trades
-
-Two different monitoring strategies:
-1. WHALE ALERTS: Monitor specific markets for big bets (websocket)
-2. USER TRACKING: Monitor specific user's position changes (polling)
-"""
-
 from lukhed_markets.polymarket import Polymarket
 import time
 
@@ -16,13 +8,15 @@ import time
 # Use this when you want to know when ANYONE makes a large bet on specific markets
 # Real-time, great for catching whale activity as it happens
 
-def whale_alert_example():
-    """Monitor Trump market for trades over $10,000"""
+def whale_alert_example(market_slug):
+    """Monitor market for trades over $10,000"""
     
     pm = Polymarket()
     
+    """
+    Example of custom callback (in this example this is unused wince we will use the default print)
+    
     def whale_callback(trade_data):
-        """Custom alert when whale trade detected"""
         size = float(trade_data.get('size', 0))
         price = float(trade_data.get('price', 0))
         value = size * price
@@ -31,18 +25,18 @@ def whale_alert_example():
         print(f"🐋 WHALE ALERT: ${value:,.0f} trade!")
         print(f"{'='*60}")
         print(f"Market: {trade_data.get('market')}")
+        print(f"Asset ID: {trade_data.get('asset_id', 'Unknown')}")
         print(f"Side: {trade_data.get('side')}")
-        print(f"Outcome: {trade_data.get('outcome')}")
         print(f"Size: {size:,.0f} shares @ ${price:.3f}")
-        print(f"Trader: {trade_data.get('trade_owner', 'Unknown')}")
         print(f"Time: {trade_data.get('timestamp', 'Unknown')}")
         print(f"{'='*60}\n")
+    """
     
-    # Monitor Trump election market for trades over $10k
+    # Monitor specified market for trades over $10k
     ws = pm.monitor_market_for_whales(
-        markets=["will-donald-trump-be-elected-president-in-2024"],
-        min_trade_value=10000,  # $10,000 minimum
-        callback=whale_callback
+        markets=[market_slug],
+        min_trade_value=0.1,  # $10,000 minimum
+        callback=None  # Use default print callback (or replace with whale_callback above
     )
     
     print("🐋 Whale alert active! Monitoring for trades over $10,000")
@@ -228,7 +222,8 @@ if __name__ == "__main__":
     choice = input("Enter choice (1-4) or press Enter for #1: ").strip() or "1"
     
     if choice == "1":
-        whale_alert_example()
+        market_slug = input("Enter market slug to monitor (e.g., from event url, cbb-nd-vtech-2026-01-17): ").strip() or 'cbb-fl-vand-2026-01-17'
+        whale_alert_example(market_slug)
     elif choice == "2":
         user_tracking_example()
     elif choice == "3":

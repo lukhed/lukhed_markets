@@ -753,9 +753,64 @@ class Polymarket:
         while True:
             time.sleep(1)
         """
+
+        def _whale_filter_callback(data):
+            """Filter market messages for large trades, call user callback if matched"""
+            try:
+                # Handle both single messages and lists of messages
+                messages = data if isinstance(data, list) else [data]
+                
+                for item in messages:
+                    # Look for 'last_trade_price' events (actual trades)
+                    # Silently ignore 'book', 'price_change', and other event types
+                    if item.get('event_type') == 'last_trade_price':
+                        size = float(item.get('size', 0))
+                        price = float(item.get('price', 0))
+                        trade_value = size * price
+                        
+                        # Check if trade meets threshold
+                        is_whale = False
+                        if min_trade_value is not None:
+                            is_whale = trade_value >= min_trade_value
+                        else:
+                            is_whale = size >= min_trade_size
+                        
+                        if is_whale:
+                            # Call user's callback if provided, otherwise print default message
+                            if callback:
+                                callback(item)  # ← User's callback called here
+                            else:
+                                # Get friendly name if available
+                                asset_id = item.get('asset_id', '')
+                                if asset_id in asset_id_to_name:
+                                    question, outcome = asset_id_to_name[asset_id]
+                                    market_display = f"{question} - {outcome}"
+                                else:
+                                    market_display = f"Market ID: {item.get('market', 'Unknown')}"
+                                
+                                # Get transaction hash to look up trader on blockchain
+                                tx_hash = item.get('transaction_hash', '')
+                                
+                                print(f"\n{'='*60}")
+                                print(f"🐋 WHALE ALERT: ${trade_value:,.0f} trade!")
+                                print(f"{'='*60}")
+                                print(f"Market: {market_display}")
+                                print(f"Side: {item.get('side')}")
+                                print(f"Size: {size:,.0f} shares @ ${price:.3f}")
+                                print(f"Time: {item.get('timestamp', 'Unknown')}")
+                                if tx_hash:
+                                    print(f"Tx: https://polygonscan.com/tx/{tx_hash}")
+                                print(f"{'='*60}\n")
+
+            except Exception as e:
+                print(f"Error filtering message: {e}")
+
         # Get asset IDs if markets were provided
         if asset_ids is None and markets is None:
             raise ValueError("Must provide either 'markets' or 'asset_ids' parameter")
+        
+        # Build mapping of asset_id -> (question, outcome) for friendly display
+        asset_id_to_name = {}
         
         if markets is not None:
             # Fetch asset IDs for the specified markets
@@ -766,17 +821,31 @@ class Polymarket:
                     market_data = self.get_event_by_slug(market_identifier)
                     if market_data and 'markets' in market_data:
                         for market in market_data['markets']:
-                            if 'tokens' in market:
-                                for token in market['tokens']:
-                                    asset_ids.append(token['token_id'])
-                except:
+                            # clobTokenIds is a JSON string, need to parse it
+                            if 'clobTokenIds' in market and 'outcomes' in market:
+                                clob_tokens = json.loads(market['clobTokenIds'])
+                                outcomes = json.loads(market['outcomes']) if isinstance(market['outcomes'], str) else market['outcomes']
+                                question = market.get('question', 'Unknown Market')
+                                
+                                # Map each asset_id to its outcome
+                                for asset_id, outcome in zip(clob_tokens, outcomes):
+                                    asset_ids.append(asset_id)
+                                    asset_id_to_name[asset_id] = (question, outcome)
+                except Exception as e:
                     # If slug doesn't work, assume it's a condition_id
                     markets_list = self.get_markets(get_all_data=False)
                     for market in markets_list:
-                        if market.get('condition_id') == market_identifier:
-                            if 'tokens' in market:
-                                for token in market['tokens']:
-                                    asset_ids.append(token['token_id'])
+                        if market.get('conditionId') == market_identifier:
+                            # clobTokenIds is a JSON string, need to parse it
+                            if 'clobTokenIds' in market and 'outcomes' in market:
+                                clob_tokens = json.loads(market['clobTokenIds'])
+                                outcomes = json.loads(market['outcomes']) if isinstance(market['outcomes'], str) else market['outcomes']
+                                question = market.get('question', 'Unknown Market')
+                                
+                                # Map each asset_id to its outcome
+                                for asset_id, outcome in zip(clob_tokens, outcomes):
+                                    asset_ids.append(asset_id)
+                                    asset_id_to_name[asset_id] = (question, outcome)
                             break
             
             if not asset_ids:
@@ -785,37 +854,10 @@ class Polymarket:
             print(f"🐋 Monitoring {len(asset_ids)} assets from {len(markets)} market(s) for large trades...")
         else:
             print(f"🐋 Monitoring {len(asset_ids)} assets for large trades...")
+            print(f"   Note: Asset ID mapping not available when providing raw asset_ids")
         
-        def whale_filter_callback(data):
-            """Filter market messages for large trades"""
-            try:
-                if data.get('event_type') == 'trade' and data.get('status') == 'MATCHED':
-                    size = float(data.get('size', 0))
-                    price = float(data.get('price', 0))
-                    trade_value = size * price
-                    
-                    # Check if trade meets threshold
-                    is_whale = False
-                    if min_trade_value is not None:
-                        is_whale = trade_value >= min_trade_value
-                    else:
-                        is_whale = size >= min_trade_size
-                    
-                    if is_whale:
-                        if callback:
-                            callback(data)
-                        else:
-                            print(f"\n🐋 WHALE ALERT!")
-                            print(f"   Trade Value: ${trade_value:,.2f}")
-                            print(f"   Side: {data.get('side')}")
-                            print(f"   Size: {size:,.0f} shares")
-                            print(f"   Price: ${price:.3f}")
-                            print(f"   Market: {data.get('market')}")
-                            print(f"   Trader: {data.get('trade_owner', 'Unknown')[:10]}...")
-            except Exception as e:
-                print(f"Error filtering message: {e}")
-        
-        return self.subscribe_to_markets(asset_ids, whale_filter_callback)    
+        # Pass our filter callback to subscribe_to_markets
+        return self.subscribe_to_markets(asset_ids, _whale_filter_callback)    
     
     def monitor_user_positions(self, address, poll_interval=60, callback=None):
         """
@@ -926,6 +968,7 @@ class Polymarket:
         thread = threading.Thread(target=poll_loop, daemon=True)
         thread.start()
         return thread        
+
 
 class PolymarketAuth(Polymarket, LukhedAuth):
     """
