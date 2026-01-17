@@ -174,6 +174,40 @@ class Polymarket:
                 return []
             
             return response['data']
+        
+    def get_top_holders_for_market(self, market_condition_id, min_balance=1):
+        """
+        Gets the top holders for a specific market.
+
+        Parameters
+        ----------
+        market_condition_id : str
+            The market condition ID to get holders for.
+        min_balance : int, optional
+            Minimum balance filter, by default 1
+        get_all_data : bool, optional
+            Whether to retrieve all pages of holders, by default False
+
+        Returns
+        -------
+        list
+            List of top holders for the market. Note if this is a yes/no market, the both holders are returned in two 
+            separate lists.
+        """
+        limit = 20
+        params = {
+            "limit": limit,
+            "minBalance": min_balance,
+            "market": market_condition_id
+        }
+        url = 'https://data-api.polymarket.com/holders'
+
+        response = self._call_api(url, params=params)
+        if response['statusCode'] != 200:
+            print(f"Error fetching holders: {response['statusCode']}")
+            return []
+        return response['data']
+
     
     
     ##############################
@@ -497,4 +531,66 @@ class Polymarket:
 
         return data
     
-    
+    def get_current_positions_for_user(self, address, market=None, event_id=None, size_threshold=1, 
+                                       redeemable=False, mergeable=False, sort_by='TOKENS', 
+                                       sort_direction='DESC', get_all_data=False):
+        """
+        Gets current positions for a user from the Polymarket Data API.
+
+        Parameters
+        ----------
+        address : str
+            User address (required). User Profile Address (0x-prefixed, 40 hex chars)
+        market : str or list, optional
+            Condition ID or comma-separated list of condition IDs. Mutually exclusive with event_id, by default None
+        event_id : int or list, optional
+            Event ID or comma-separated list of event IDs. Mutually exclusive with market, by default None
+        size_threshold : number, optional
+            Minimum position size threshold, by default 1
+        redeemable : bool, optional
+            Filter for redeemable positions, by default False
+        mergeable : bool, optional
+            Filter for mergeable positions, by default False
+        sort_by : str, optional
+            Field to sort by. Options: CURRENT, INITIAL, TOKENS, CASHPNL, PERCENTPNL, TITLE, RESOLVING, PRICE, 
+            AVGPRICE, by default 'TOKENS'
+        sort_direction : str, optional
+            Sort direction (ASC or DESC), by default 'DESC'
+        get_all_data : bool, optional
+            Whether to retrieve all pages of positions, by default False
+
+        Returns
+        -------
+        list
+            List of user positions
+        """
+        limit = 500
+        
+        # Convert market and event_id to comma-separated strings if they're lists
+        if isinstance(market, list):
+            market = ','.join(market)
+        if isinstance(event_id, list):
+            event_id = ','.join(str(id) for id in event_id)
+        
+        params = {
+            "user": address,
+            "market": market,
+            "eventId": event_id,
+            "sizeThreshold": size_threshold,
+            "redeemable": redeemable,
+            "mergeable": mergeable,
+            "limit": limit,
+            "sortBy": sort_by.upper(),
+            "sortDirection": sort_direction.upper()
+        }
+        
+        url = 'https://data-api.polymarket.com/positions'
+
+        if get_all_data:
+            return self._call_api_get_all_responses(url, limit, params, True)
+        else:
+            response = self._call_api(url, params=params)
+            if response['statusCode'] != 200:
+                print(f"Error fetching positions: {response['statusCode']}")
+                return []
+            return response['data']
