@@ -9,7 +9,7 @@ import time
 # Real-time, great for catching whale activity as it happens
 
 def whale_alert_example(market_slug):
-    """Monitor market for trades over $10,000"""
+    """Monitor market for trades over $2,000"""
     
     pm = Polymarket()
     
@@ -32,14 +32,15 @@ def whale_alert_example(market_slug):
         print(f"{'='*60}\n")
     """
     
-    # Monitor specified market for trades over $10k
+    # Monitor specified market for trades over $2k
+    print("\n\n")
     ws = pm.monitor_market_for_whales(
         markets=[market_slug],
-        min_trade_value=0.1,  # $10,000 minimum
+        min_trade_value=2000,  # $2,000 minimum
         callback=None  # Use default print callback (or replace with whale_callback above
     )
     
-    print("🐋 Whale alert active! Monitoring for trades over $10,000")
+    print("🐋 Whale alert active! Monitoring for trades over $2,000")
     print("Press Ctrl+C to stop\n")
     
     # Keep running
@@ -222,7 +223,7 @@ if __name__ == "__main__":
     choice = input("Enter choice (1-4) or press Enter for #1: ").strip() or "1"
     
     if choice == "1":
-        market_slug = input("Enter market slug to monitor (e.g., from event url, cbb-nd-vtech-2026-01-17): ").strip() or 'cbb-fl-vand-2026-01-17'
+        market_slug = input("Enter market slug to monitor (e.g., from event url, cbb-nd-vtech-2026-01-17): ").strip() or 'nfl-sf-sea-2026-01-17'
         whale_alert_example(market_slug)
     elif choice == "2":
         user_tracking_example()

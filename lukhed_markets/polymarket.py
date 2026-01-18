@@ -1,4 +1,3 @@
-from xmlrpc import client
 from lukhed_basic_utils import timeCommon as tC
 from lukhed_basic_utils import requestsCommon as rC
 from lukhed_basic_utils.classCommon import LukhedAuth
@@ -8,6 +7,7 @@ import json
 import time
 import threading
 from websocket import WebSocketApp
+from web3 import Web3
 
 
 class MarketWebSocket:
@@ -711,7 +711,7 @@ class Polymarket:
         return ws_monitor
     
     def monitor_market_for_whales(self, markets=None, asset_ids=None, min_trade_size=1000, 
-                                   min_trade_value=None, callback=None):
+                                   min_trade_value=None, callback=None, find_trader_retries=3):
         """
         Monitor markets for large trades ("whale" activity) via websocket.
         Does NOT require authentication - uses public market channel.
@@ -754,7 +754,7 @@ class Polymarket:
             time.sleep(1)
         """
 
-        def _whale_filter_callback(data):
+        def _whale_filter_callback(data, find_trader_retries=find_trader_retries):
             """Filter market messages for large trades, call user callback if matched"""
             try:
                 # Handle both single messages and lists of messages
@@ -787,10 +787,47 @@ class Polymarket:
                                     market_display = f"{question} - {outcome}"
                                 else:
                                     market_display = f"Market ID: {item.get('market', 'Unknown')}"
+
+                                # Get trader address with retry logic
+                                tx_hash = item.get('transaction_hash', None)
+                                side = item.get('side', None)
+                                trans_data = None
+                                trader = None
                                 
-                                # Get transaction hash to look up trader on blockchain
-                                tx_hash = item.get('transaction_hash', '')
-                                
+                                if tx_hash and side:
+                                    # Try to fetch transaction data with retries
+                                    for attempt in range(find_trader_retries + 1):
+                                        try:
+                                            tC.sleep(3)
+                                            trans_data = self.get_trader_from_transaction(tx_hash, buy_or_sell=side.lower())
+                                            if trans_data and trans_data.get('trader'):
+                                                trader = trans_data['trader']
+                                                break
+                                        except Exception as tx_error:
+                                            error_msg = str(tx_error)
+                                            
+                                            # Check if rate limited
+                                            if 'rate limit' in error_msg.lower() or 'too many requests' in error_msg.lower():
+                                                if attempt < find_trader_retries:
+                                                    print(f"⚠️  Rate limited by RPC, waiting 12s before retry...")
+                                                    tC.sleep(12)  # Wait longer for rate limit
+                                                else:
+                                                    print(f"❌ Rate limited, skipping trader lookup")
+                                            # Check if transaction not found (not yet indexed)
+                                            elif 'not found' in error_msg.lower():
+                                                if attempt < find_trader_retries:
+                                                    print(f"⏳ Transaction not indexed yet (attempt {attempt + 1}/{find_trader_retries + 1}), retrying in 5s...")
+                                                    tC.sleep(5)
+                                                else:
+                                                    print(f"❌ Transaction still not indexed after {find_trader_retries + 1} attempts")
+                                            else:
+                                                # Other error
+                                                if attempt < find_trader_retries:
+                                                    print(f"⚠️  Error: {error_msg[:100]}, retrying in 3s...")
+                                                    tC.sleep(3)
+                                                else:
+                                                    print(f"❌ Failed after {find_trader_retries + 1} attempts: {error_msg[:100]}")
+
                                 print(f"\n{'='*60}")
                                 print(f"🐋 WHALE ALERT: ${trade_value:,.0f} trade!")
                                 print(f"{'='*60}")
@@ -798,6 +835,8 @@ class Polymarket:
                                 print(f"Side: {item.get('side')}")
                                 print(f"Size: {size:,.0f} shares @ ${price:.3f}")
                                 print(f"Time: {item.get('timestamp', 'Unknown')}")
+                                if trader:
+                                    print(f"Trader: https://polymarket.com/{trader}")
                                 if tx_hash:
                                     print(f"Tx: https://polygonscan.com/tx/{tx_hash}")
                                 print(f"{'='*60}\n")
@@ -967,7 +1006,155 @@ class Polymarket:
         
         thread = threading.Thread(target=poll_loop, daemon=True)
         thread.start()
-        return thread        
+        return thread
+
+    ###############################
+    # Web3 methods
+    ###############################
+    def get_trader_from_transaction(self, tx_hash, buy_or_sell, usdc_size=None):
+        """
+        Get the trader address from a Polymarket transaction hash by parsing ERC-20 transfers.
+        Uses Polygon blockchain RPC to parse the transaction.
+        
+        Parameters
+        ----------
+        tx_hash : str
+            Transaction hash (0x-prefixed)
+        buy_or_sell : str
+            'buy' or 'sell' to indicate trade side
+        usdc_size : float, optional
+            USDC size of the trade to confirm accuracy, by default None
+            
+        Returns
+        -------
+        dict
+            Dictionary with keys:
+            - 'all_transfers': list of all transfer events in the transaction
+            - 'trade_transfer': the specific transfer event related to the trade
+            - 'trader': the address of the likely trader
+            - 'net_transfer': the net transfer value in human-readable format
+        """
+        all_transfers = []
+        transfer = None
+
+        try:
+            # Connect to Polygon RPC (free public endpoint)
+            w3 = Web3(Web3.HTTPProvider('https://polygon-rpc.com'))
+            
+            # Get transaction receipt
+            receipt = w3.eth.get_transaction_receipt(tx_hash)
+            
+            # ERC-20/ERC-1155 Transfer event signature (without 0x prefix, as .hex() returns it that way)
+            # Transfer(address indexed from, address indexed to, uint256 value)
+            transfer_topic = 'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+            # TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
+            transfer_single_topic = 'c3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62'
+            
+            # Known token decimals on Polygon (for converting raw values to human-readable)
+            KNOWN_DECIMALS = {
+                '0x2791bca1f2de4661ed88a30c99a7a9449aa84174': 6,  # USDC
+                '0xc2132d05d31c914a87c6611c10748aeb04b58e8f': 6,  # USDT
+                '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270': 18, # WMATIC
+                '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619': 18, # WETH
+            }
+            
+            for log in receipt['logs']:
+                topic0 = log['topics'][0].hex()
+                
+                # Handle ERC-20 Transfer events
+                if topic0 == transfer_topic and len(log['topics']) >= 3:
+                    from_addr = '0x' + log['topics'][1].hex()[-40:]
+                    to_addr = '0x' + log['topics'][2].hex()[-40:]
+                    raw_value = int(log['data'].hex(), 16) if log['data'].hex() != '0x' else 0
+                    token_addr = log['address']
+                    
+                    # Get decimals for this token (default to 18 if unknown)
+                    decimals = KNOWN_DECIMALS.get(token_addr.lower(), 18)
+                    human_value = raw_value / (10 ** decimals)
+                    
+                    all_transfers.append({
+                        'from': from_addr,
+                        'to': to_addr,
+                        'value': raw_value,
+                        'value_human': human_value,  # Human-readable value
+                        'decimals': decimals,
+                        'token': token_addr,
+                        'type': 'ERC20'
+                    })
+                    
+                
+                # Handle ERC-1155 TransferSingle events (Polymarket uses ERC-1155 for positions)
+                elif topic0 == transfer_single_topic and len(log['topics']) >= 4:
+                    from_addr = '0x' + log['topics'][2].hex()[-40:]
+                    to_addr = '0x' + log['topics'][3].hex()[-40:]
+                    
+                    # Value is in data field for ERC-1155
+                    # .hex() already returns without '0x' prefix
+                    data_hex = log['data'].hex()
+                    
+                    # Parse data (first 32 bytes = token id, second 32 bytes = value)
+                    # Each byte is 2 hex chars, so 32 bytes = 64 hex chars
+                    if len(data_hex) >= 128:
+                        token_id = int(data_hex[:64], 16)
+                        value = int(data_hex[64:128], 16)
+                    else:
+                        # Fallback if data format is unexpected
+                        token_id = 0
+                        value = 0
+                    
+                    token_addr = log['address']
+                    
+                    all_transfers.append({
+                        'from': from_addr,
+                        'to': to_addr,
+                        'value': value,
+                        'token': token_addr,
+                        'token_id': token_id,
+                        'type': 'ERC1155'
+                    })
+            
+            
+            
+            if len(all_transfers) > 0:
+                if buy_or_sell.lower() == 'buy':
+                    # buyer is the 'from' address in the first transfer, sending USDC out
+                    transfer = all_transfers[0]
+                    trader = transfer['from']
+                else:
+                    # seller is the 'to' address in the last transfer, receiving USDC
+                    transfer = all_transfers[-1]
+                    trader = transfer['to']
+
+                if usdc_size:
+                    confirm_accuracy = usdc_size/transfer['value_human']
+                    if not (0.9 <= confirm_accuracy <= 1.1):
+                        print(f"Warning: USDC size {usdc_size} does not match transfer value {transfer['value_human']}")
+                
+                return {
+                    'all_transfers': all_transfers,
+                    'trade_transfer': transfer,
+                    'trader': trader,
+                    'net_transfer': transfer['value_human']
+                }
+            else:
+                print("WARNING: No transfer events found in transaction.")
+                return {
+                    'all_transfers': all_transfers,
+                    'trade_transfer': None,
+                    'trader': None,
+                    'net_transfer': None
+                }
+
+
+            
+        except Exception as e:
+            # Check if it's the specific buy/sell error (KeyError on 'value_human')
+            if "'value_human'" in str(e):
+                print(f"❌ Could not find the trader. You specified '{buy_or_sell}'. "
+                      f"Is this correct? Must be 'buy' or 'sell'.")
+            
+            # Re-raise the exception so retry logic in the caller can handle it
+            raise   
 
 
 class PolymarketAuth(Polymarket, LukhedAuth):
