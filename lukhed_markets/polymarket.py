@@ -285,7 +285,7 @@ class Polymarket:
     ##############################
     # Event Methods
     ##############################
-    def get_events(self, tag=None, include_closed=False, active_only=True, get_all_data=True, order_by=None, 
+    def get_events(self, tag=None, include_closed=False, active_only=True, get_all_data=True, order=None, 
                    ascending=True):
         """
         Gets a list of events from the Polymarket Gamma API.
@@ -298,7 +298,7 @@ class Polymarket:
             Whether or not to include closed events, by default False
         get_all_data : bool, optional
             Whether or not to return all pages of data, by default True
-        order_by : str, optional
+        order : str, optional
             Comma-separated list of fields to order by.
         ascending : bool, optional
             Whether to order in ascending order, by default True
@@ -313,7 +313,7 @@ class Polymarket:
             "tag_id": tag,
             "closed": include_closed,
             "active": active_only,
-            "order_by": order_by,
+            "order": order,
             "ascending": ascending
         }
         url = 'https://gamma-api.polymarket.com/events'

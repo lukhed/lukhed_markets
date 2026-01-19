@@ -127,7 +127,7 @@ def multi_market_whale_example(dollar_threshold=2000):
     
     # Get top markets by volume
     print("Fetching top markets by 24h volume...")
-    events = pm.get_events(order_by='volume24hr', ascending=False, get_all_data=False)
+    events = pm.get_events(order='volume24hr', ascending=False, get_all_data=False)
     
     # Get slugs for top 5 markets
     top_market_slugs = [event['slug'] for event in events[:5]]
