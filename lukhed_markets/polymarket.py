@@ -914,11 +914,12 @@ class Polymarket:
     
     def monitor_user_positions(self, address, poll_interval=60, callback=None):
         """
-        Monitor a user's positions by polling the REST API periodically.
-        Does NOT require authentication.
-        
-        This is the RECOMMENDED way to track specific user activity (better than websockets).
-        You'll be notified when their positions change (new trades, exits, etc).
+        Monitor a user's positions by polling the REST API periodically. By default, 
+        you'll be notified when their positions change (new trades, exits, etc) through terminal prints. You can 
+        also provide a custom callback function to handle position changes.
+
+        Note: By default, this only monitors positions with size >= 0.01 and only non-redeemable positions (i.e.,
+        open markets).
         
         Parameters
         ----------
@@ -937,22 +938,7 @@ class Polymarket:
             
         Example
         -------
-        def position_changed(addr, positions, changes):
-            print(f"User {addr[:8]}... positions updated:")
-            print(f"  New positions: {len(changes.get('new', []))}")
-            print(f"  Changed positions: {len(changes.get('changed', []))}")
-            print(f"  Closed positions: {len(changes.get('closed', []))}")
-        
-        thread = pm.monitor_user_positions(
-            "0x123...",
-            poll_interval=30,
-            callback=position_changed
-        )
-        
-        # Keep running
-        import time
-        while True:
-            time.sleep(1)
+        see example in example_whale_alerts.py
         """
         def poll_loop():
             last_positions = {}
