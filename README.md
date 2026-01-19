@@ -3,6 +3,15 @@
 Python API wrappers and utilities for prediction markets and economic data. 
 Includes wrappers for Kalshi, Polymarket, and FRED (Federal Reserve Economic Data).
 
+## Table of Contents
+
+- [Installation](#installation)
+- [Features](#features)
+- [Kalshi API](#kalshi-api)
+- [Polymarket API](#polymarket-api)
+- [FRED API](#fred-api)
+- [Documentation & Resources](#documentation--resources)
+
 ## Installation
 
 ```bash
@@ -12,7 +21,7 @@ pip install lukhed-markets
 ## Features
 
 - **Kalshi API**: Wrapper for Kalshi prediction markets with custom discovery methods
-- **Polymarket API**: Wrapper for Polymarket Gamma and Data APIs with pagination support
+- **Polymarket API**: Real-time, customizable alerts, user position tracking, and transaction analysis
 - **FRED API**: Wrapper for Federal Reserve Economic Data with built-in analysis and plotting capabilities
 - **Automatic pagination**: Handles paginated responses seamlessly
 - **Rate limiting**: Built-in rate limiting based on API plan tiers
@@ -131,8 +140,7 @@ all_events = client.get_all_available_events(status='open')
 
 ## Polymarket API
 
-A Python wrapper for Polymarket's Gamma API (markets, events, tags) and Data API (leaderboards, comments), 
-with support for the CLOB API via `py-clob-client`.
+A Python wrapper for Polymarket's Gamma API (markets, events, tags) and Data API (user activity, positions, leaderboards).
 
 ### Quick Start
 
@@ -141,90 +149,76 @@ from lukhed_markets.polymarket import Polymarket
 
 # Initialize (no authentication required for public endpoints)
 pm = Polymarket(api_delay=0.1)
-
-# Access CLOB API directly if needed
-pm.clob_api  # Instance of py_clob_client.client.ClobClient
 ```
 
-### API Status
+### Key Features
 
+- **Market & Event Discovery**: Search and filter markets/events with automatic pagination
+- **User Activity Tracking**: Monitor positions, trades, and portfolio changes
+- **Whale Alerts**: Real-time monitoring for large trades via WebSockets
+- **Transaction Analysis**: Parse blockchain transactions to identify traders
+
+### Core API Methods
+
+#### Markets & Events
 ```python
-# Check API status
-gamma_status = pm.get_gamma_status()  # Gamma API status
-data_status = pm.get_data_status()    # Data API status
+# Get markets with filtering
+markets = pm.get_markets(tag_filter='politics', active_only=True, get_all_data=True)
+
+# Get events
+events = pm.get_events(tag='crypto', order_by='volume', ascending=False)
+
+# Get specific event
+event = pm.get_event_by_slug('presidential-election-2024')
 ```
 
-### Markets
-
+#### User Data
 ```python
-# Get all active markets with pagination
-markets = pm.get_markets(get_all_data=True, include_closed=False, active_only=True)
-
-# Get markets by tag
-politics_markets = pm.get_markets(tag_filter='politics', get_all_data=False)
-
-# Available tag filters: 'politics', 'crypto', 'sports', 'science', 'culture', etc.
-```
-
-### Events
-
-```python
-# Get all events with pagination
-events = pm.get_events(get_all_data=True, include_closed=False, active_only=True)
-
-# Get events by tag with sorting
-crypto_events = pm.get_events(
-    tag='crypto', 
-    order_by='volume', 
-    ascending=False,
+# Get user positions (active only)
+positions = pm.get_current_positions_for_user(
+    address="0x123...",
+    redeemable=False,  # Exclude resolved markets
     get_all_data=True
 )
 
-# Get specific event by ID or slug
-event = pm.get_event_by_id('event-id-123')
-event = pm.get_event_by_slug('fed-decision-in-january')
-```
-
-### Tags
-
-```python
-# Get all tags
-tags = pm.get_tags(get_all_data=True)
-
-# Get specific tag details
-tag = pm.get_tag_by_id('politics')
-
-# Get related tags
-related = pm.get_related_tags('politics')
-```
-
-### User Data
-
-```python
-# Get comments for a market/event/series
-comments = pm.list_comments(
-    entity_type='market',
-    entity_id='market-id-123',
-    get_positions=True,
-    holders_only=False
+# Get user trading activity
+activity = pm.get_user_activity(
+    address="0x123...",
+    activity_type_list=["TRADE"],
+    side="BUY",
+    get_all_data=True
 )
 
-# Get leaderboard data
+# Get leaderboard
 leaderboard = pm.get_leaderboards(
-    category='POLITICS',      # OVERALL, POLITICS, SPORTS, CRYPTO, etc.
-    time_period='MONTH',      # ALL, DAY, WEEK, MONTH
-    rank_by='profit',         # profit or volume
-    get_all_data=True
+    category='POLITICS',
+    time_period='MONTH',
+    rank_by='profit'
+)
+```
+
+#### Real-time Monitoring
+```python
+# Monitor markets for large trades (whale alerts)
+ws = pm.monitor_market_for_whales(
+    markets=["presidential-election-2024"],
+    min_trade_value=5000,
+    callback=lambda trade: print(f"🐋 ${trade['size']*trade['price']:.0f} trade")
 )
 
-# Check specific user on leaderboard
-user_data = pm.get_leaderboards(
-    single_user_check='0x1234...',
-    user_identifier='address'  # or 'username'
+# Monitor user positions (polling)
+thread = pm.monitor_user_positions(
+    address="0x123...",
+    poll_interval=60,
+    callback=my_callback_function
 )
 ```
 
 ### Example Usage
+
+See [example_whale_alerts.py](example_whale_alerts.py) for complete examples including:
+- **Strategy 1**: Whale alerts - Monitor markets for large trades via WebSocket
+- **Strategy 2**: User position tracking - Monitor specific user portfolios via polling
 
 ```python
 from lukhed_markets.polymarket import Polymarket
@@ -232,25 +226,18 @@ from lukhed_markets.polymarket import Polymarket
 # Initialize
 pm = Polymarket()
 
-# Get all active politics markets
-politics_markets = pm.get_markets(
-    tag_filter='politics',
-    active_only=True,
-    include_closed=False,
-    get_all_data=True
+# Get top holders for a market
+holders = pm.get_top_holders_for_market(
+    market_condition_id="0xabc...",
+    min_balance=100
 )
 
-# Get event details with comments
-event = pm.get_event_by_slug('presidential-election-2024')
-comments = pm.list_comments('event', event['id'], get_all_data=True)
-
-# Get top traders
-top_traders = pm.get_leaderboards(
-    category='OVERALL',
-    time_period='ALL',
-    rank_by='profit',
-    get_all_data=True
+# Get transaction details
+trader = pm.get_trader_from_transaction(
+    tx_hash="0x123...",
+    buy_or_sell="buy"
 )
+print(f"Trader: {trader['trader']}")
 ```
 
 ---
