@@ -120,7 +120,7 @@ def user_tracking_example():
 # =============================================================================
 # Monitor multiple high-volume markets simultaneously
 
-def multi_market_whale_example():
+def multi_market_whale_example(dollar_threshold=2000):
     """Monitor top markets for large trades"""
     
     pm = Polymarket()
@@ -137,17 +137,17 @@ def multi_market_whale_example():
         print(f"   {i}. {slug}")
     print()
     
-    # Monitor for trades over $5000
+    # Monitor for trades over dollar_threshold
     ws = pm.monitor_market_for_whales(
         markets=top_market_slugs,
-        min_trade_value=5000,
+        min_trade_value=dollar_threshold,
         callback=lambda trade: print(
             f"🐋 ${float(trade['size'])*float(trade['price']):,.0f} {trade['side']} "
             f"on {trade['outcome']} @ ${float(trade['price']):.3f}"
         )
     )
     
-    print("🐋 Monitoring top 5 markets for trades over $5,000")
+    print(f"🐋 Monitoring top 5 markets for trades over ${dollar_threshold:,}")
     print("Press Ctrl+C to stop\n")
     
     try:
@@ -175,27 +175,22 @@ def discover_and_track_whales():
     print(f"\n📊 Top 5 Traders This Month:")
     print("-" * 60)
     for i, leader in enumerate(leaders[:5], 1):
-        print(f"{i}. {leader['name']}")
-        print(f"   Address: {leader['address']}")
-        print(f"   Profit: ${leader.get('profit', 0):,.2f}")
-        print(f"   Volume: ${leader.get('volume', 0):,.2f}")
+        print(f"{i}. {leader.get('userName') or 'Unknown'}")
+        print(f"   Address: {leader.get('proxyWallet') or 'Unknown'}")
+        print(f"   Profit: ${leader.get('pnl', 0):,.2f}")
+        print(f"   Volume: ${leader.get('vol', 0):,.2f}")
         print()
     
     # Track the #1 trader
-    top_whale = leaders[0]['address']
+    top_whale = leaders[0]['proxyWallet']
     print(f"🎯 Now tracking #{1} trader: {top_whale[:10]}...")
     print()
     
     # Monitor their positions
     thread = pm.monitor_user_positions(
         address=top_whale,
-        poll_interval=60,  # Check every minute
-        callback=lambda addr, positions, changes: print(
-            f"🚨 Top whale activity! "
-            f"New: {len(changes['new'])}, "
-            f"Changed: {len(changes['changed'])}, "
-            f"Closed: {len(changes['closed'])}"
-        )
+        poll_interval=30,  # Check every 30 seconds
+        callback=None
     )
     
     print("Monitoring... Press Ctrl+C to stop\n")
