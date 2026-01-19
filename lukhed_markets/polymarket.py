@@ -138,7 +138,8 @@ class Polymarket:
         all_data = []
         offset = 0
         
-        print("Fetching all paginated data from API...")
+        if print_progress:
+            print("Fetching all paginated data from API...")
         while True:
             params['limit'] = limit
             params['offset'] = offset
@@ -603,8 +604,8 @@ class Polymarket:
         return data
     
     def get_current_positions_for_user(self, address, market=None, event_id=None, size_threshold=1, 
-                                       redeemable=False, mergeable=False, sort_by='TOKENS', 
-                                       sort_direction='DESC', get_all_data=False):
+                                       redeemable=None, mergeable=None, sort_by='TOKENS', 
+                                       sort_direction='DESC', get_all_data=False, print_progress=True):
         """
         Gets current positions for a user from the Polymarket Data API.
 
@@ -619,9 +620,13 @@ class Polymarket:
         size_threshold : number, optional
             Minimum position size threshold, by default 1
         redeemable : bool, optional
-            Filter for redeemable positions, by default False
+            If True, only return redeemable positions (resolved markets that can be claimed). 
+            If False only non-redeemable positions
+            By default, None (no filter)
         mergeable : bool, optional
-            Filter for mergeable positions, by default False
+            If True, only return mergeable positions. 
+            If False only non-mergeable positions.
+            By default, None (no filter)
         sort_by : str, optional
             Field to sort by. Options: CURRENT, INITIAL, TOKENS, CASHPNL, PERCENTPNL, TITLE, RESOLVING, PRICE, 
             AVGPRICE, by default 'TOKENS'
@@ -629,11 +634,18 @@ class Polymarket:
             Sort direction (ASC or DESC), by default 'DESC'
         get_all_data : bool, optional
             Whether to retrieve all pages of positions, by default False
+        print_progress : bool, optional
+            Whether to print progress during pagination, by default True
 
         Returns
         -------
         list
             List of user positions
+            
+        Notes
+        -----
+        Redeemable positions are markets that have resolved (ended) where the user can claim their 
+        winnings or losses. They still show up in the user's positions because they haven't been redeemed yet.
         """
         limit = 500
         
@@ -648,23 +660,25 @@ class Polymarket:
             "market": market,
             "eventId": event_id,
             "sizeThreshold": size_threshold,
-            "redeemable": redeemable,
-            "mergeable": mergeable,
             "limit": limit,
             "sortBy": sort_by.upper(),
-            "sortDirection": sort_direction.upper()
+            "sortDirection": sort_direction.upper(),
+            "redeemable": redeemable,
+            "mergeable": mergeable
         }
         
         url = 'https://data-api.polymarket.com/positions'
 
         if get_all_data:
-            return self._call_api_get_all_responses(url, limit, params, True)
+            data = self._call_api_get_all_responses(url, limit, params, print_progress=print_progress)
         else:
             response = self._call_api(url, params=params)
             if response['statusCode'] != 200:
                 print(f"Error fetching positions: {response['statusCode']}")
                 return []
-            return response['data']
+            data = response['data']
+        
+        return data
     
     
     ###############################
@@ -915,7 +929,7 @@ class Polymarket:
         callback : callable, optional
             Function called when positions change.
             Receives (address, positions_dict, changes_dict) as parameters.
-            
+
         Returns
         -------
         threading.Thread
@@ -949,13 +963,16 @@ class Polymarket:
                     # Get current positions
                     current_positions = self.get_current_positions_for_user(
                         address, 
-                        size_threshold=0.01
+                        size_threshold=0.01,
+                        redeemable=False,
+                        get_all_data=True,
+                        print_progress=False
                     )
                     
                     # Build position map by market+outcome
                     current_map = {}
                     for pos in current_positions:
-                        key = f"{pos.get('market')}_{pos.get('outcome')}"
+                        key = f"{pos.get('slug')}_{pos.get('outcome')}"
                         current_map[key] = pos
                     
                     # Detect changes
@@ -976,6 +993,8 @@ class Polymarket:
                                     'outcome': pos.get('outcome'),
                                     'old_size': last_positions[key].get('size'),
                                     'new_size': pos.get('size'),
+                                    'old_value': last_positions[key].get('currentValue', 0),
+                                    'new_value': pos.get('currentValue', 0),
                                     'position': pos
                                 })
                         
@@ -992,10 +1011,65 @@ class Polymarket:
                                 print(f"\n📊 Position changes for {address[:10]}...")
                                 if changes['new']:
                                     print(f"   ✅ {len(changes['new'])} new position(s)")
+                                    for pos in changes['new']:
+                                        slug = pos.get('slug', 'N/A')[:35]
+                                        outcome = pos.get('outcome', 'N/A')
+                                        size = pos.get('size', 0)
+                                        avg_price = pos.get('avgPrice', 0)
+                                        initial_value = pos.get('initialValue', 0)
+                                        print(f"      • {slug} - {outcome}: {size:.2f} shares @ ${avg_price:.3f} (${initial_value:.2f})")
+                                
                                 if changes['changed']:
                                     print(f"   📈 {len(changes['changed'])} position(s) changed")
+                                    for change in changes['changed']:
+                                        pos = change['position']
+                                        slug = pos.get('slug', 'N/A')[:35]
+                                        outcome = change['outcome']
+                                        old_size = change['old_size']
+                                        new_size = change['new_size']
+                                        old_value = change['old_value']
+                                        new_value = change['new_value']
+                                        size_delta = new_size - old_size
+                                        value_delta = new_value - old_value
+                                        size_delta_symbol = "+" if size_delta > 0 else ""
+                                        value_delta_symbol = "+" if value_delta > 0 else ""
+                                        print(f"      • {slug} - {outcome}:")
+                                        print(f"        size change: {old_size:.2f} → {new_size:.2f} ({size_delta_symbol}{size_delta:.2f})")
+                                        print(f"        value change: ${old_value:.2f} → ${new_value:.2f} ({value_delta_symbol}${value_delta:.2f})")
+                                
                                 if changes['closed']:
                                     print(f"   ❌ {len(changes['closed'])} position(s) closed")
+                                    for pos in changes['closed']:
+                                        slug = pos.get('slug', 'N/A')[:35]
+                                        outcome = pos.get('outcome', 'N/A')
+                                        final_value = pos.get('currentValue', 0)
+                                        initial_value = pos.get('initialValue', 0)
+                                        pnl = final_value - initial_value
+                                        pnl_symbol = "+" if pnl > 0 else ""
+                                        print(f"      • {slug} - {outcome}: Final P&L: {pnl_symbol}${pnl:.2f}")
+                        else:
+                            print(f"\n📊 No position changes for {address[:10]}, waiting poll interval...")
+                    
+                    else:
+                        print(f"📊 Initial fetch: {len(current_positions)} positions for {address[:10]}")
+                        if current_positions:
+                            print("\n" + "="*120)
+                            print(f"{'Market':<40} {'Outcome':<10} {'Size':<12} {'Avg Price':<12} {'Initial $':<12} {'Current $':<12} {'P&L':<12}")
+                            print("="*120)
+                            for pos in current_positions:
+                                slug = pos.get('slug', 'N/A')[:38]
+                                outcome = pos.get('outcome', 'N/A')[:8]
+                                size = pos.get('size', 0)
+                                avg_price = pos.get('avgPrice', 0)
+                                initial_value = pos.get('initialValue', 0)
+                                current_value = pos.get('currentValue', 0)
+                                pnl = current_value - initial_value
+                                pnl_symbol = "📈" if pnl > 0 else "📉" if pnl < 0 else "➖"
+                                
+                                print(f"{slug:<40} {outcome:<10} {size:<12.2f} ${avg_price:<11.3f} ${initial_value:<11.2f} ${current_value:<11.2f} {pnl_symbol}${pnl:<10.2f}")
+                            print("="*120 + "\n")
+
+                    
                     
                     last_positions = current_map
                     time.sleep(poll_interval)

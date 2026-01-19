@@ -8,8 +8,8 @@ import time
 # Use this when you want to know when ANYONE makes a large bet on specific markets
 # Real-time, great for catching whale activity as it happens
 
-def whale_alert_example(market_slug):
-    """Monitor market for trades over $2,000"""
+def whale_alert_example(market_slug, dollar_threshold=2000):
+    """Monitor market for trades at or over threshold"""
     
     pm = Polymarket()
     
@@ -36,11 +36,11 @@ def whale_alert_example(market_slug):
     print("\n\n")
     ws = pm.monitor_market_for_whales(
         markets=[market_slug],
-        min_trade_value=2000,  # $2,000 minimum
-        callback=None  # Use default print callback (or replace with whale_callback above
+        min_trade_value=dollar_threshold,  # Use the provided threshold
+        callback=None  # Use default print callback (or replace with whale_callback above)
     )
     
-    print("🐋 Whale alert active! Monitoring for trades over $2,000")
+    print(f"🐋 Whale alert active! Monitoring for trades over ${dollar_threshold:,}")
     print("Press Ctrl+C to stop\n")
     
     # Keep running
@@ -64,10 +64,11 @@ def user_tracking_example():
     
     # Example: Track a top leaderboard trader
     # You can get these addresses from: pm.get_leaderboards()
-    USER_ADDRESS = "0x0a9a7d6ae576a8f694656d683a7fab5ebf854129"  # Replace with real address
+    USER_ADDRESS = "0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee"  # an active all time leader
     
+    """
+    Example of custom callback function to handle position changes
     def position_callback(address, all_positions, changes):
-        """Called when user's positions change"""
         print(f"\n{'='*60}")
         print(f"📊 POSITION UPDATE: {address[:10]}...")
         print(f"{'='*60}")
@@ -93,12 +94,13 @@ def user_tracking_example():
         
         print(f"\nTotal active positions: {len(all_positions)}")
         print(f"{'='*60}\n")
+    """
     
     # Monitor user every 30 seconds
     thread = pm.monitor_user_positions(
         address=USER_ADDRESS,
         poll_interval=30,  # Check every 30 seconds
-        callback=position_callback
+        callback=None  # Use default print callback (or replace with position_callback above)
     )
     
     print(f"📊 Tracking user {USER_ADDRESS[:10]}... positions")
@@ -223,7 +225,7 @@ if __name__ == "__main__":
     choice = input("Enter choice (1-4) or press Enter for #1: ").strip() or "1"
     
     if choice == "1":
-        market_slug = input("Enter market slug to monitor (e.g., from event url, cbb-nd-vtech-2026-01-17): ").strip() or 'nfl-sf-sea-2026-01-17'
+        market_slug = input("Enter market slug to monitor (e.g., from event url, cbb-nd-vtech-2026-01-17): ").strip()
         whale_alert_example(market_slug)
     elif choice == "2":
         user_tracking_example()
