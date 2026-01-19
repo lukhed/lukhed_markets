@@ -57,14 +57,14 @@ def whale_alert_example(market_slug, dollar_threshold=2000):
 # Use this when you want to track a specific whale/trader across ALL their positions
 # Polls every X seconds, detects new/changed/closed positions
 
-def user_tracking_example():
+def user_tracking_example(user_address):
     """Track a specific user's portfolio changes"""
     
     pm = Polymarket()
     
     # Example: Track a top leaderboard trader
     # You can get these addresses from: pm.get_leaderboards()
-    USER_ADDRESS = "0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee"  # an active all time leader
+    USER_ADDRESS = user_address  # an active all time leader
     
     """
     Example of custom callback function to handle position changes
@@ -223,7 +223,8 @@ if __name__ == "__main__":
         market_slug = input("Enter market slug to monitor (e.g., from event url, cbb-nd-vtech-2026-01-17): ").strip()
         whale_alert_example(market_slug)
     elif choice == "2":
-        user_tracking_example()
+        user_address = input("Enter user address to monitor (e.g., 0x1234...): ").strip()
+        user_tracking_example(user_address)
     elif choice == "3":
         multi_market_whale_example()
     elif choice == "4":
