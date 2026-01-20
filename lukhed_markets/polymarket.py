@@ -121,7 +121,7 @@ class Polymarket:
             return None
         
     def _call_api(self, url, params=None, rate_limit_tuple=None):
-        response = rC.make_request(url, params=params)
+        response = rC.make_request(url, params=params, timeout=15)
         try:
             data = json.loads(response.text)
         except json.JSONDecodeError:
@@ -189,7 +189,7 @@ class Polymarket:
         
     def get_gamma_status(self):
         url = 'https://gamma-api.polymarket.com/status'
-        response = rC.make_request(url)
+        response = rC.make_request(url, timeout=5)
         if response.status_code != 200:
             print(f"Error fetching status: {response.status_code}")
             return None
