@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="lukhed_markets",
-    version="0.2.1",
+    version="0.2.2",
     description="A collection of broad market analysis functions and api wrappers",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
@@ -22,5 +22,6 @@ setup(
         "fredapi>=0.5.2",
         "py_clob_client>=0.34.1",
         "websocket-client>=1.9.0",
+        "web3>=7.14.0",
     ],
 )
