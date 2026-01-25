@@ -942,6 +942,8 @@ class Polymarket:
         """
         def poll_loop():
             last_positions = {}
+            current_positions = []
+            changes = []
             print(f"📊 Monitoring positions for {address[:10]}... (polling every {poll_interval}s)")
             
             while True:
@@ -1035,6 +1037,8 @@ class Polymarket:
                                         print(f"      • {slug} - {outcome}: Final P&L: {pnl_symbol}${pnl:.2f}")
                         else:
                             print(f"\n📊 No position changes for {address[:10]}, waiting poll interval...")
+                            if callback:
+                                callback(address, current_positions, changes)
                     
                     else:
                         print(f"📊 Initial fetch: {len(current_positions)} positions for {address[:10]}")
@@ -1054,7 +1058,8 @@ class Polymarket:
                                 
                                 print(f"{slug:<40} {outcome:<10} {size:<12.2f} ${avg_price:<11.3f} ${initial_value:<11.2f} ${current_value:<11.2f} {pnl_symbol}${pnl:<10.2f}")
                             print("="*120 + "\n")
-
+                        if callback:
+                            callback(address, current_positions, changes)
                     
                     
                     last_positions = current_map
