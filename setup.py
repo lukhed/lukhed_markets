@@ -19,7 +19,7 @@ setup(
     ],
     install_requires=[
         "lukhed-basic-utils>=1.6.9",
-        "fredapi>=0.5.2",
+        "fredapi>=0.5.3",
         "py_clob_client>=0.34.1",
         "websocket-client>=1.9.0",
         "web3>=7.14.0",

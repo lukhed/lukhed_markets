@@ -1039,7 +1039,8 @@ class Polymarket:
                                     'new_size': pos.get('size'),
                                     'old_value': last_positions[key].get('currentValue', 0),
                                     'new_value': pos.get('currentValue', 0),
-                                    'position': pos
+                                    'position': pos,
+                                    'lastPosition': last_positions[key]
                                 })
                         
                         # Check for closed positions
