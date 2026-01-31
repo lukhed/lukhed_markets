@@ -280,7 +280,33 @@ class Polymarket:
             return []
         return response['data']
 
-    
+    def get_market_by_id(self, market_id, include_tag=True):
+        """
+        Gets data for market given market id
+        https://docs.polymarket.com/api-reference/markets/get-market-by-id
+
+        Parameters
+        ----------
+        market_id : str
+            The market ID to retrieve (can be found in event data under 'markets' list)
+        include_tag : bool, optional
+            Whether to include tags in the response, by default True
+
+        Returns
+        -------
+        dict
+            Market data for the given market ID
+        """
+        url = f'https://gamma-api.polymarket.com/markets/{market_id}'
+        if include_tag:
+            url += '?include_tag=true'
+
+        response = self._call_api(url)
+        if response['statusCode'] != 200:
+            print(f"Error fetching market: {response['statusCode']}")
+            return None
+        return response['data']
+
     
     ##############################
     # Event Methods
