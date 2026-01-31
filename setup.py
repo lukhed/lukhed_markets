@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="lukhed_markets",
-    version="0.2.4",
+    version="0.2.5",
     description="A collection of broad market analysis functions and api wrappers",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
