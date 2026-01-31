@@ -280,7 +280,63 @@ class Polymarket:
             return []
         return response['data']
 
+    def get_market_by_id(self, market_id, include_tag=True):
+        """
+        Gets data for market given market id
+        https://docs.polymarket.com/api-reference/markets/get-market-by-id
+
+        Parameters
+        ----------
+        market_id : str
+            The market ID to retrieve (can be found in event data under 'markets' list)
+        include_tag : bool, optional
+            Whether to include tags in the response, by default True
+
+        Returns
+        -------
+        dict
+            Market data for the given market ID
+        """
+        url = f'https://gamma-api.polymarket.com/markets/{market_id}'
+        if include_tag:
+            url += '?include_tag=true'
+
+        response = self._call_api(url)
+        if response['statusCode'] != 200:
+            print(f"Error fetching market: {response['statusCode']}")
+            return None
+        return response['data']
     
+    def get_markets_for_event(self, event_id, event_id_type='id', event_data=None):
+        """
+        Gets markets for a specific event by event ID or slug.
+
+        Parameters
+        ----------
+        event_id : str
+            The event ID or slug to get markets for.
+        event_id_type : str, optional
+            Type of event identifier ('id' or 'slug'), by default 'id'
+
+        Returns
+        -------
+        list
+            List of markets for the specified event.
+        """
+        if event_data is None:
+            if event_id_type == 'slug':
+                event = self.get_event_by_slug(event_id)
+            else:
+                event = self.get_event_by_id(event_id)
+        else:
+            event = event_data
+        
+        if not event:
+            print(f"Event not found for {event_id_type}: {event_id}")
+            return []
+        
+        return event.get('markets', [])
+
     
     ##############################
     # Event Methods
