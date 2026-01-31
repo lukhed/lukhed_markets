@@ -306,6 +306,36 @@ class Polymarket:
             print(f"Error fetching market: {response['statusCode']}")
             return None
         return response['data']
+    
+    def get_markets_for_event(self, event_id, event_id_type='id', event_data=None):
+        """
+        Gets markets for a specific event by event ID or slug.
+
+        Parameters
+        ----------
+        event_id : str
+            The event ID or slug to get markets for.
+        event_id_type : str, optional
+            Type of event identifier ('id' or 'slug'), by default 'id'
+
+        Returns
+        -------
+        list
+            List of markets for the specified event.
+        """
+        if event_data is None:
+            if event_id_type == 'slug':
+                event = self.get_event_by_slug(event_id)
+            else:
+                event = self.get_event_by_id(event_id)
+        else:
+            event = event_data
+        
+        if not event:
+            print(f"Event not found for {event_id_type}: {event_id}")
+            return []
+        
+        return event.get('markets', [])
 
     
     ##############################
