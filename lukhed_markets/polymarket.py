@@ -1058,8 +1058,12 @@ class Polymarket:
                         # Check for closed positions
                         for key, pos in last_positions.items():
                             if key not in current_map:
-                                sells = self.get_user_activity(address, activity_type_list=["TRADE"], side="SELL")
-                                changes['closed'].append(pos)
+                                sells = self.get_user_activity(address, activity_type_list=["TRADE"], side="SELL", 
+                                                               event_id=pos.get('eventId'))
+                                changes['closed'].append({
+                                    'position': pos,
+                                    'sells': sells
+                                })
                         
                         # Notify if there are changes
                         if any(changes.values()):
