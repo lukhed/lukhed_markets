@@ -599,8 +599,9 @@ class Polymarket:
                 return []
             return response['data']
         
-    def get_user_activity(self, address, activity_type_list=["TRADE"], side=None, get_all_data=False, 
-                          start_date=None, end_date=None, date_format="%Y-%m-%d", add_datetime=True):
+    def get_user_activity(self, address, activity_type_list=["TRADE"], side=None, event_id=None, 
+                          get_all_data=False, start_date=None, end_date=None, date_format="%Y-%m-%d", 
+                          add_datetime=True):
         """
         Get user activity from the Polymarket Data API.
 
@@ -613,6 +614,8 @@ class Polymarket:
             by default ["TRADE"]
         side : str, optional
             Side of the trade to filter by (e.g., "BUY" or "SELL"), by default None
+        event_id : int, str, or list, optional
+            Event ID or list of event IDs to filter activity, by default None
         get_all_data : bool, optional
             Whether to retrieve all pages of user activity data, by default False
         start_date : str, optional
@@ -630,6 +633,14 @@ class Polymarket:
             List of user activity records
         """
         start_date, end_date = self._parse_date_inputs(start_date, end_date, date_format=date_format)
+        
+        # Convert event_id to list format if provided
+        if event_id is not None:
+            if isinstance(event_id, (int, str)):
+                event_id = [str(event_id)]
+            else:
+                event_id = [str(eid) for eid in event_id]
+        
         limit = 500 # Max limit per request
         params = {
             "user": address,
@@ -639,7 +650,8 @@ class Polymarket:
             "sortDirection": "DESC",
             "start": start_date,
             "end": end_date,
-            "side": side.upper() if side else None
+            "side": side.upper() if side else None,
+            "eventId": event_id
         }
         url = f'https://data-api.polymarket.com/activity'
 
@@ -1046,7 +1058,12 @@ class Polymarket:
                         # Check for closed positions
                         for key, pos in last_positions.items():
                             if key not in current_map:
-                                changes['closed'].append(pos)
+                                sells = self.get_user_activity(address, activity_type_list=["TRADE"], side="SELL", 
+                                                               event_id=pos.get('eventId'))
+                                changes['closed'].append({
+                                    'position': pos,
+                                    'sells': sells
+                                })
                         
                         # Notify if there are changes
                         if any(changes.values()):
