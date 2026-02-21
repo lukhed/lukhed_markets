@@ -980,7 +980,7 @@ class Polymarket:
         # Pass our filter callback to subscribe_to_markets
         return self.subscribe_to_markets(asset_ids, _whale_filter_callback)    
     
-    def monitor_user_positions(self, address, poll_interval=60, callback=None):
+    def monitor_user_positions(self, address, poll_interval=60, callback=None, stop_event=None):
         """
         Monitor a user's positions by polling the REST API periodically. By default, 
         you'll be notified when their positions change (new trades, exits, etc) through terminal prints. You can 
@@ -998,6 +998,8 @@ class Polymarket:
         callback : callable, optional
             Function called when positions change.
             Receives (address, positions_dict, changes_dict) as parameters.
+        stop_event : threading.Event, optional
+            Event to signal the monitoring thread to stop, by default None
 
         Returns
         -------
@@ -1014,7 +1016,7 @@ class Polymarket:
             changes = []
             print(f"📊 Monitoring positions for {address[:10]}... (polling every {poll_interval}s)")
             
-            while True:
+            while not (stop_event and stop_event.is_set()):
                 try:
                     # Get current positions
                     current_positions = self.get_current_positions_for_user(
@@ -1137,11 +1139,19 @@ class Polymarket:
                     
                     
                     last_positions = current_map
-                    time.sleep(poll_interval)
+                    
+                    # Use interruptible wait if stop_event provided
+                    if stop_event:
+                        stop_event.wait(timeout=poll_interval)
+                    else:
+                        time.sleep(poll_interval)
                     
                 except Exception as e:
                     print(f"Error monitoring user positions: {e}")
-                    time.sleep(poll_interval)
+                    if stop_event:
+                        stop_event.wait(timeout=poll_interval)
+                    else:
+                        time.sleep(poll_interval)
         
         thread = threading.Thread(target=poll_loop, daemon=True)
         thread.start()
