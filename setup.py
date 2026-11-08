@@ -2,14 +2,14 @@ from setuptools import setup, find_packages
 
 setup(
     name="lukhed_markets",
-    version="0.3.1",
+    version="0.4.0",
     description="A collection of broad market analysis functions and api wrappers",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     author="lukhed",
     author_email="lukhed.mail@gmail.com",
     url="https://github.com/lukhed/lukhed_markets",
-    packages=find_packages(),
+    packages=find_packages(exclude=["tests", "tests.*"]),
     include_package_data=True,  # Ensures MANIFEST.in is used
     python_requires=">=3.10",
     classifiers=[
@@ -20,8 +20,11 @@ setup(
     install_requires=[
         "lukhed-basic-utils>=1.6.9",
         "fredapi>=0.5.2",
-        "py_clob_client>=0.34.1",
+        "requests>=2.31.0",
         "websocket-client>=1.9.0",
-        "web3>=7.14.0",
     ],
+    extras_require={
+        # Authenticated Polymarket trading (PolymarketAuth) uses Polymarket's unified SDK, which needs Python 3.11+
+        "polymarket-trading": ["polymarket-client>=0.17.0; python_version >= '3.11'"],
+    },
 )

@@ -1,5 +1,19 @@
 from lukhed_markets.polymarket import Polymarket
+import logging
 import time
+
+# Show connection, reconnect and lookup messages from the monitors
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("websocket").setLevel(logging.WARNING)
+
+
+def wait_until_interrupted(monitor, message="Stopping..."):
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(f"\n👋 {message}")
+        monitor.stop()
 
 
 # =============================================================================
@@ -10,45 +24,30 @@ import time
 
 def whale_alert_example(market_slug, dollar_threshold=2000):
     """Monitor market for trades at or over threshold"""
-    
+
     pm = Polymarket()
-    
+
     """
-    Example of custom callback (in this example this is unused wince we will use the default print)
-    
-    def whale_callback(trade_data):
-        size = float(trade_data.get('size', 0))
-        price = float(trade_data.get('price', 0))
-        value = size * price
-        
-        print(f"\n{'='*60}")
-        print(f"🐋 WHALE ALERT: ${value:,.0f} trade!")
-        print(f"{'='*60}")
-        print(f"Market: {trade_data.get('market')}")
-        print(f"Asset ID: {trade_data.get('asset_id', 'Unknown')}")
-        print(f"Side: {trade_data.get('side')}")
-        print(f"Size: {size:,.0f} shares @ ${price:.3f}")
-        print(f"Time: {trade_data.get('timestamp', 'Unknown')}")
-        print(f"{'='*60}\n")
+    Example of a custom callback (unused here: the default callback prints each trade).
+    The trade dict is the websocket last_trade_price message plus trade_value, question, outcome,
+    and the trader's wallet (trader / trader_name) once the Data API has indexed the trade.
+
+    def whale_callback(trade):
+        print(f"🐋 ${trade['trade_value']:,.0f} {trade['side']} {trade['outcome']} on {trade['question']}")
+        if trade['trader']:
+            print(f"   by {trade['trader_name']} https://polymarket.com/profile/{trade['trader']}")
     """
-    
-    # Monitor specified market for trades over $2k
+
     print("\n\n")
-    ws = pm.monitor_market_for_whales(
+    monitor = pm.monitor_market_for_whales(
         markets=[market_slug],
-        min_trade_value=dollar_threshold,  # Use the provided threshold
+        min_trade_value=dollar_threshold,
         callback=None  # Use default print callback (or replace with whale_callback above)
     )
-    
+
     print(f"🐋 Whale alert active! Monitoring for trades over ${dollar_threshold:,}")
     print("Press Ctrl+C to stop\n")
-    
-    # Keep running
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n👋 Stopping whale alerts...")
+    wait_until_interrupted(monitor, "Stopping whale alerts...")
 
 
 # =============================================================================
@@ -59,60 +58,36 @@ def whale_alert_example(market_slug, dollar_threshold=2000):
 
 def user_tracking_example(user_address):
     """Track a specific user's portfolio changes"""
-    
+
     pm = Polymarket()
-    
-    # Example: Track a top leaderboard trader
-    # You can get these addresses from: pm.get_leaderboards()
-    USER_ADDRESS = user_address  # an active all time leader
-    
+
     """
-    Example of custom callback function to handle position changes
+    Example of a custom callback. It is called after every poll; changes['initial'] is True on the first.
+
     def position_callback(address, all_positions, changes):
-        print(f"\n{'='*60}")
-        print(f"📊 POSITION UPDATE: {address[:10]}...")
-        print(f"{'='*60}")
-        
-        if changes['new']:
-            print(f"\n✅ NEW POSITIONS ({len(changes['new'])}):")
-            for pos in changes['new'][:3]:  # Show first 3
-                print(f"   • {pos.get('outcome')} - Size: {pos.get('size', 0):.0f}")
-        
-        if changes['changed']:
-            print(f"\n📈 CHANGED POSITIONS ({len(changes['changed'])}):")
-            for change in changes['changed'][:3]:  # Show first 3
-                old = change['old_size']
-                new = change['new_size']
-                diff = float(new) - float(old)
-                direction = "↑" if diff > 0 else "↓"
-                print(f"   {direction} {change['outcome']}: {old} → {new} ({diff:+.0f})")
-        
-        if changes['closed']:
-            print(f"\n❌ CLOSED POSITIONS ({len(changes['closed'])}):")
-            for pos in changes['closed'][:3]:  # Show first 3
-                print(f"   • {pos.get('outcome')} - Was: {pos.get('size', 0):.0f}")
-        
-        print(f"\nTotal active positions: {len(all_positions)}")
-        print(f"{'='*60}\n")
+        if changes['initial']:
+            print(f"Tracking {len(all_positions)} open positions for {address[:10]}...")
+            return
+        for pos in changes['new']:
+            print(f"✅ NEW: {pos['outcome']} on {pos['title']} - {pos['current_size']:.0f} shares")
+        for change in changes['changed']:
+            print(f"📈 {change['outcome']}: {change['old_size']:.0f} → {change['new_size']:.0f}")
+        for closed in changes['closed']:
+            final = closed['final_position'] or {}
+            print(f"❌ CLOSED ({closed['reason']}): {closed['position']['title']} "
+                  f"realized P&L {final.get('realized_pnl', 0):+.2f}")
     """
-    
-    # Monitor user every 30 seconds
-    thread = pm.monitor_user_positions(
-        address=USER_ADDRESS,
+
+    monitor = pm.monitor_user_positions(
+        address=user_address,
         poll_interval=30,  # Check every 30 seconds
         callback=None  # Use default print callback (or replace with position_callback above)
     )
-    
-    print(f"📊 Tracking user {USER_ADDRESS[:10]}... positions")
+
+    print(f"📊 Tracking user {user_address[:10]}... positions")
     print("Checking every 30 seconds...")
     print("Press Ctrl+C to stop\n")
-    
-    # Keep running
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n👋 Stopping user tracking...")
+    wait_until_interrupted(monitor, "Stopping user tracking...")
 
 
 # =============================================================================
@@ -122,39 +97,30 @@ def user_tracking_example(user_address):
 
 def multi_market_whale_example(dollar_threshold=2000):
     """Monitor top markets for large trades"""
-    
+
     pm = Polymarket()
-    
-    # Get top markets by volume
-    print("Fetching top markets by 24h volume...")
-    events = pm.get_events(order='volume24hr', ascending=False, get_all_data=False)
-    
-    # Get slugs for top 5 markets
-    top_market_slugs = [event['slug'] for event in events[:5]]
-    
-    print(f"\nMonitoring top 5 markets:")
-    for i, slug in enumerate(top_market_slugs, 1):
+
+    print("Fetching top events by 24h volume...")
+    events = pm.get_events(order='volume24hr', ascending=False, max_results=5)
+    top_event_slugs = [event['slug'] for event in events]
+
+    print(f"\nMonitoring top {len(top_event_slugs)} events:")
+    for i, slug in enumerate(top_event_slugs, 1):
         print(f"   {i}. {slug}")
     print()
-    
-    # Monitor for trades over dollar_threshold
-    ws = pm.monitor_market_for_whales(
-        markets=top_market_slugs,
+
+    monitor = pm.monitor_market_for_whales(
+        markets=top_event_slugs,
         min_trade_value=dollar_threshold,
         callback=lambda trade: print(
-            f"🐋 ${float(trade['size'])*float(trade['price']):,.0f} {trade['side']} "
-            f"on {trade['outcome']} @ ${float(trade['price']):.3f}"
+            f"🐋 ${trade['trade_value']:,.0f} {trade['side']} on {trade['outcome']} @ ${float(trade['price']):.3f}"
+            f" | {trade['question']} | trader: {trade['trader_name'] or trade['trader'] or 'unknown'}"
         )
     )
-    
-    print(f"🐋 Monitoring top 5 markets for trades over ${dollar_threshold:,}")
+
+    print(f"🐋 Monitoring top events for trades over ${dollar_threshold:,}")
     print("Press Ctrl+C to stop\n")
-    
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n👋 Stopping...")
+    wait_until_interrupted(monitor)
 
 
 # =============================================================================
@@ -164,42 +130,33 @@ def multi_market_whale_example(dollar_threshold=2000):
 
 def discover_and_track_whales():
     """Find top traders and track their positions"""
-    
+
     pm = Polymarket()
-    
+
     print("🔍 Finding top traders...")
-    
-    # Get monthly leaderboard
-    leaders = pm.get_leaderboards(time_period='month', rank_by='profit')
-    
-    print(f"\n📊 Top 5 Traders This Month:")
+    leaders = pm.get_leaderboards(time_period='month', rank_by='profit', limit=5)
+
+    print("\n📊 Top 5 Traders This Month:")
     print("-" * 60)
-    for i, leader in enumerate(leaders[:5], 1):
-        print(f"{i}. {leader.get('userName') or 'Unknown'}")
-        print(f"   Address: {leader.get('proxyWallet') or 'Unknown'}")
+    for leader in leaders[:5]:
+        print(f"{leader['rank']}. {leader.get('user_name') or 'Unknown'}")
+        print(f"   Address: {leader['user_id']}")
         print(f"   Profit: ${leader.get('pnl', 0):,.2f}")
-        print(f"   Volume: ${leader.get('vol', 0):,.2f}")
+        print(f"   Volume: ${leader.get('volume', 0):,.2f}")
         print()
-    
-    # Track the #1 trader
-    top_whale = leaders[0]['proxyWallet']
-    print(f"🎯 Now tracking #{1} trader: {top_whale[:10]}...")
+
+    top_whale = leaders[0]['user_id']
+    print(f"🎯 Now tracking #1 trader: {top_whale[:10]}...")
     print()
-    
-    # Monitor their positions
-    thread = pm.monitor_user_positions(
+
+    monitor = pm.monitor_user_positions(
         address=top_whale,
         poll_interval=30,  # Check every 30 seconds
         callback=None
     )
-    
+
     print("Monitoring... Press Ctrl+C to stop\n")
-    
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n👋 Stopping...")
+    wait_until_interrupted(monitor)
 
 
 # =============================================================================
@@ -207,22 +164,19 @@ def discover_and_track_whales():
 # =============================================================================
 
 if __name__ == "__main__":
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Polymarket Whale Alert Examples")
-    print("="*60)
+    print("=" * 60)
     print("\nChoose a strategy:")
     print("1. Whale Alerts - Monitor market for big trades (websocket)")
     print("2. User Tracking - Monitor specific user positions (polling)")
     print("3. Multi-Market - Monitor top markets for whales")
     print("4. Discover & Track - Find and track top traders")
     print()
-    
+
     choice = input("Enter choice (1-4) or press Enter for #1: ").strip() or "1"
-    
-    if choice == "1":
-        market_slug = input("Enter market slug to monitor (e.g., from event url, cbb-nd-vtech-2026-01-17): ").strip()
-        whale_alert_example(market_slug)
-    elif choice == "2":
+
+    if choice == "2":
         user_address = input("Enter user address to monitor (e.g., 0x1234...): ").strip()
         user_tracking_example(user_address)
     elif choice == "3":
@@ -230,5 +184,8 @@ if __name__ == "__main__":
     elif choice == "4":
         discover_and_track_whales()
     else:
-        print("Invalid choice, running whale alerts...")
-        whale_alert_example()
+        if choice != "1":
+            print("Invalid choice, running whale alerts...")
+        market_slug = input("Enter event or market slug to monitor (e.g., from the event url, "
+                            "cbb-nd-vtech-2026-01-17): ").strip()
+        whale_alert_example(market_slug)
