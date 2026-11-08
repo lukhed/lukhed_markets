@@ -41,9 +41,11 @@ logger = logging.getLogger(__name__)
 
 GAMMA_URL = 'https://gamma-api.polymarket.com'
 DATA_URL = 'https://data-api.polymarket.com/v2'
+CLOB_URL = 'https://clob.polymarket.com'
 
 GAMMA_PAGE_LIMIT = 100      # Gamma silently caps every page at 100 rows
 DATA_PAGE_LIMIT = 1000      # Data API v2 maximum page size
+CLOB_BATCH_LIMIT = 500      # CLOB batch endpoints reject payloads over 500 entries
 
 POSITION_STATUSES = ('OPEN', 'REDEEMABLE', 'REDEEMABLE_LOST', 'MERGEABLE', 'CLOSED')
 POSITION_SORT_FIELDS = ('CURRENT_VALUE', 'PRICE', 'TOKENS', 'UNREALIZED_PNL', 'REALIZED_PNL', 'TOTAL_PNL',
@@ -53,6 +55,13 @@ LEADERBOARD_SORTS = {'profit': 'PNL', 'pnl': 'PNL', 'volume': 'VOLUME', 'vol': '
 COMMENT_ENTITY_TYPES = {'event': 'Event', 'series': 'Series', 'perpsasset': 'PerpsAsset'}
 
 _RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _to_float(value):
+    try:
+        return None if value is None or value == '' else float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class PolymarketAPIError(Exception):
@@ -135,10 +144,10 @@ class Polymarket:
         except (TypeError, ValueError):
             return None
 
-    def _request(self, url, params=None, allow_404=False):
+    def _request(self, url, params=None, allow_404=False, json_body=None):
         """
-        GET a JSON endpoint. Retries rate limits, server errors and connection errors; raises
-        PolymarketAPIError on failure. Returns None for a 404 when allow_404 is True.
+        Call a JSON endpoint: GET, or POST when json_body is given. Retries rate limits, server errors and
+        connection errors; raises PolymarketAPIError on failure. Returns None for a 404 when allow_404 is True.
         """
         params = self._clean_params(params)
         response = None
@@ -146,7 +155,10 @@ class Polymarket:
             self._throttle()
             backoff = min(0.5 * 2 ** attempt, 30)
             try:
-                response = self.session.get(url, params=params, timeout=self.timeout)
+                if json_body is None:
+                    response = self.session.get(url, params=params, timeout=self.timeout)
+                else:
+                    response = self.session.post(url, params=params, json=json_body, timeout=self.timeout)
             except (requests.ConnectionError, requests.Timeout) as e:
                 if attempt < self.max_retries:
                     logger.warning("Request to %s failed (%s), retrying in %.1fs", url, e, backoff)
@@ -455,7 +467,7 @@ class Polymarket:
     # Event Methods
     ##############################
     def get_events(self, tag=None, include_closed=False, active_only=True, get_all_data=True, order=None,
-                   ascending=True, max_results=None):
+                   ascending=True, max_results=None, series_id=None):
         """
         Gets a list of events from the Gamma API (keyset pagination, 100 per page).
 
@@ -475,6 +487,8 @@ class Polymarket:
             Whether to order in ascending order, by default True
         max_results : int, optional
             Stop after this many events, by default None (no limit)
+        series_id : str or int, optional
+            Only return events in this series (e.g. a league's season, see get_sports()), by default None
 
         Returns
         -------
@@ -482,6 +496,7 @@ class Polymarket:
             List of events
         """
         params = {
+            "series_id": series_id,
             "tag_id": self._resolve_tag_id(tag),
             "active": True if active_only else None,
             "order": order,
@@ -510,6 +525,94 @@ class Polymarket:
         'fed-decision-in-january'.
         """
         return self._request(f'{self.gamma_url}/events/slug/{event_slug}', allow_404=True)
+
+    ###############################
+    # Sports
+    ###############################
+    def get_sports(self):
+        """
+        Gets sports/league metadata from the Gamma API: one entry per league with its 'sport' code
+        (e.g. 'nfl'), 'series' id(s), 'tags' and 'primaryTagId'.
+        """
+        return self._request(f'{self.gamma_url}/sports') or []
+
+    def get_teams(self, league=None, max_results=None):
+        """Gets teams (name, abbreviation, alias, record, logo), optionally for one league (e.g. 'nfl')."""
+        return self._paginate_gamma_offset('/teams', {"league": league}, get_all_data=True, max_results=max_results)
+
+    def get_sports_market_types(self):
+        """Gets every sportsMarketType value used by sports markets (moneyline, spreads, totals, props...)."""
+        return (self._request(f'{self.gamma_url}/sports/market-types') or {}).get('marketTypes', [])
+
+    ###############################
+    # Order book prices (CLOB, public)
+    ###############################
+    def _clob_batch(self, path, entries):
+        """POST entries to a CLOB batch endpoint in chunks it accepts. Returns the list of chunk responses."""
+        return [self._request(f'{CLOB_URL}{path}', json_body=entries[i:i + CLOB_BATCH_LIMIT])
+                for i in range(0, len(entries), CLOB_BATCH_LIMIT)]
+
+    def get_prices(self, token_ids):
+        """
+        Gets live best bid and best ask for outcome tokens from the order book. Unlike Gamma market data,
+        which is cached for up to 5 minutes, these prices are current.
+
+        Parameters
+        ----------
+        token_ids : list
+            Outcome token ids (a market's clobTokenIds)
+
+        Returns
+        -------
+        dict
+            token_id -> {'bid': float or None, 'ask': float or None}. The ask is the price to buy now.
+        """
+        ids = list(dict.fromkeys(str(t) for t in token_ids))
+        entries = [{"token_id": t, "side": side} for t in ids for side in ("BUY", "SELL")]
+        prices = {t: {'bid': None, 'ask': None} for t in ids}
+        for chunk in self._clob_batch('/prices', entries):
+            for token_id, sides in (chunk or {}).items():
+                # The CLOB names sides from the resting order's point of view: BUY is the best bid and
+                # SELL is the best ask.
+                prices.setdefault(token_id, {'bid': None, 'ask': None})
+                prices[token_id]['bid'] = _to_float(sides.get('BUY'))
+                prices[token_id]['ask'] = _to_float(sides.get('SELL'))
+        return prices
+
+    def get_midpoints(self, token_ids):
+        """Gets live midpoint prices: token_id -> float (None when the book is empty on a side)."""
+        ids = list(dict.fromkeys(str(t) for t in token_ids))
+        mids = {t: None for t in ids}
+        for chunk in self._clob_batch('/midpoints', [{"token_id": t} for t in ids]):
+            for token_id, mid in (chunk or {}).items():
+                mids[token_id] = _to_float(mid)
+        return mids
+
+    def get_order_books(self, token_ids):
+        """
+        Gets live order books for outcome tokens.
+
+        Returns
+        -------
+        dict
+            token_id -> {'bids': [(price, size), ...] best first, 'asks': [(price, size), ...] best first,
+            'tick_size', 'min_order_size', 'last_trade_price', 'timestamp', 'market'}
+        """
+        ids = list(dict.fromkeys(str(t) for t in token_ids))
+        books = {}
+        for chunk in self._clob_batch('/books', [{"token_id": t} for t in ids]):
+            for book in chunk or []:
+                books[book['asset_id']] = {
+                    'bids': sorted(((float(b['price']), float(b['size'])) for b in book.get('bids', [])),
+                                   reverse=True),
+                    'asks': sorted((float(a['price']), float(a['size'])) for a in book.get('asks', [])),
+                    'tick_size': _to_float(book.get('tick_size')),
+                    'min_order_size': _to_float(book.get('min_order_size')),
+                    'last_trade_price': _to_float(book.get('last_trade_price')),
+                    'timestamp': book.get('timestamp'),
+                    'market': book.get('market'),
+                }
+        return books
 
     ###############################
     # Tags
