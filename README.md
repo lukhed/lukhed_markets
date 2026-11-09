@@ -21,7 +21,7 @@ pip install lukhed-markets
 ## Features
 
 - **Kalshi API**: Wrapper for Kalshi prediction markets with custom discovery methods
-- **Polymarket API**: Real-time, customizable alerts, user position tracking, and transaction analysis
+- **Polymarket API**: Market discovery, user positions and trades, real-time whale alerts and position tracking
 - **FRED API**: Wrapper for Federal Reserve Economic Data with built-in analysis and plotting capabilities
 - **Automatic pagination**: Handles paginated responses seamlessly
 - **Rate limiting**: Built-in rate limiting based on API plan tiers
@@ -140,105 +140,133 @@ all_events = client.get_all_available_events(status='open')
 
 ## Polymarket API
 
-A Python wrapper for Polymarket's Gamma API (markets, events, tags) and Data API (user activity, positions, leaderboards).
+A Python wrapper for Polymarket's Gamma API (markets, events, tags, comments) and Data API v2 (users,
+positions, trades, holders, leaderboards), with real-time whale alerts and position tracking. Public data
+needs no authentication.
+
+> **0.4.0 is a breaking release.** Polymarket retired Data API v1 on Nov 2, 2026 and the legacy
+> `py-clob-client` on Apr 28, 2026. See [Upgrading from 0.3](#upgrading-from-03) below.
 
 ### Quick Start
 
 ```python
-from lukhed_markets.polymarket import Polymarket
+import logging
+from lukhed_markets.polymarket import Polymarket, PolymarketAPIError
 
-# Initialize (no authentication required for public endpoints)
-pm = Polymarket(api_delay=0.1)
+logging.basicConfig(level=logging.INFO)   # optional: show progress and monitor messages
+
+pm = Polymarket(api_delay=0.1)            # api_delay = minimum seconds between requests
 ```
 
 ### Key Features
 
-- **Market & Event Discovery**: Search and filter markets/events with automatic pagination
-- **User Activity Tracking**: Monitor positions, trades, and portfolio changes
-- **Whale Alerts**: Real-time monitoring for large trades via WebSockets
-- **Transaction Analysis**: Parse blockchain transactions to identify traders
+- **Market & Event Discovery**: Search and filter markets/events with automatic cursor pagination
+- **User Data**: Positions (open, closed, redeemable), activity, trades and leaderboards
+- **Whale Alerts**: Real-time large-trade monitoring over the public websocket, with the trader's wallet
+- **Reliable by default**: Retries rate limits (honoring `Retry-After`) and server errors, reconnects
+  websockets, and raises `PolymarketAPIError` instead of silently returning empty results
 
 ### Core API Methods
 
 #### Markets & Events
 ```python
-# Get markets with filtering
-markets = pm.get_markets(tag_filter='politics', active_only=True, get_all_data=True)
+# Markets (tag can be a tag id or slug, e.g. 'politics')
+markets = pm.get_markets(tag_filter='politics', max_results=200)
 
-# Get events
-events = pm.get_events(tag='crypto', order_by='volume', ascending=False)
+# Top events by 24h volume
+events = pm.get_events(order='volume24hr', ascending=False, max_results=10)
 
-# Get specific event
-event = pm.get_event_by_slug('presidential-election-2024')
+# Specific event or market (None if it doesn't exist)
+event = pm.get_event_by_slug('fed-decision-in-january')
+market = pm.get_market_by_slug('xi-jinping-out-before-2027')
 ```
 
 #### User Data
 ```python
-# Get user positions (active only)
-positions = pm.get_current_positions_for_user(
-    address="0x123...",
-    redeemable=False,  # Exclude resolved markets
-    get_all_data=True
-)
+# Open positions (status can also be CLOSED, REDEEMABLE, REDEEMABLE_LOST or MERGEABLE)
+positions = pm.get_current_positions_for_user(address="0x123...", get_all_data=True)
 
-# Get user trading activity
-activity = pm.get_user_activity(
-    address="0x123...",
-    activity_type_list=["TRADE"],
-    side="BUY",
-    get_all_data=True
-)
+# Trading activity
+activity = pm.get_user_activity(address="0x123...", activity_type_list=["TRADE"], side="BUY")
 
-# Get leaderboard
-leaderboard = pm.get_leaderboards(
-    category='POLITICS',
-    time_period='MONTH',
-    rank_by='profit'
-)
+# Large trades in a market, with each trader's wallet
+trades = pm.get_trades(condition_id="0xabc...", min_trade_value=5000, taker_only=True)
+
+# Leaderboard, or one user's standing
+leaderboard = pm.get_leaderboards(category='POLITICS', time_period='MONTH', rank_by='profit')
+standing = pm.get_leaderboards(single_user_check="0x123...")
+
+# Top holders of a market
+holders = pm.get_top_holders_for_market(market_condition_id="0xabc...", min_balance=100)
 ```
 
 #### Real-time Monitoring
 ```python
-# Monitor markets for large trades (whale alerts)
-ws = pm.monitor_market_for_whales(
-    markets=["presidential-election-2024"],
+# Whale alerts: event slugs, market slugs or condition ids
+monitor = pm.monitor_market_for_whales(
+    markets=["fed-decision-in-january"],
     min_trade_value=5000,
-    callback=lambda trade: print(f"🐋 ${trade['size']*trade['price']:.0f} trade")
+    callback=lambda t: print(f"🐋 ${t['trade_value']:,.0f} {t['side']} {t['outcome']} by {t['trader']}")
 )
 
-# Monitor user positions (polling)
-thread = pm.monitor_user_positions(
-    address="0x123...",
-    poll_interval=60,
-    callback=my_callback_function
-)
+# Position tracking (polling); callback receives (address, positions, changes)
+tracker = pm.monitor_user_positions(address="0x123...", poll_interval=60)
+
+monitor.stop()
+tracker.stop()
 ```
 
-### Example Usage
+See [example_whale_alerts.py](example_whale_alerts.py) for complete examples.
 
-See [example_whale_alerts.py](example_whale_alerts.py) for complete examples including:
-- **Strategy 1**: Whale alerts - Monitor markets for large trades via WebSocket
-- **Strategy 2**: User position tracking - Monitor specific user portfolios via polling
+#### Errors
+```python
+try:
+    positions = pm.get_current_positions_for_user("0x123...")
+except PolymarketAPIError as e:
+    print(e.status_code, e)
+```
+
+### Authenticated trading
+
+`PolymarketAuth` adds a trading client from Polymarket's unified SDK as `pm.api`. It needs Python 3.11+:
+
+```bash
+pip install "lukhed-markets[polymarket-trading]"
+```
 
 ```python
-from lukhed_markets.polymarket import Polymarket
+from lukhed_markets.polymarket import PolymarketAuth
 
-# Initialize
-pm = Polymarket()
-
-# Get top holders for a market
-holders = pm.get_top_holders_for_market(
-    market_condition_id="0xabc...",
-    min_balance=100
-)
-
-# Get transaction details
-trader = pm.get_trader_from_transaction(
-    tx_hash="0x123...",
-    buy_or_sell="buy"
-)
-print(f"Trader: {trader['trader']}")
+pm = PolymarketAuth()   # first run in a terminal starts a guided setup
+pm.api                  # polymarket.SecureClient: see https://docs.polymarket.com/trading/quickstart
 ```
+
+Credentials (wallet private key and Polymarket wallet address) are stored with lukhed key management, or
+passed directly with `PolymarketAuth(auth_data={'private_key': ..., 'wallet': ...})`. Credentials saved
+by 0.3 are picked up automatically. Note that Polymarket now trades in pUSD; API-only traders must wrap
+USDC.e into pUSD (see the [V2 migration guide](https://docs.polymarket.com/v2-migration)).
+
+### Upgrading from 0.3
+
+- **Data API v2 field names are snake_case**: e.g. `proxyWallet` → `proxy_wallet`, `size` →
+  `current_size`, `avgPrice` → `avg_price`, `currentValue` → `current_value`, `conditionId` →
+  `condition_id`. Leaderboard entries use `user_id`, `user_name`, `pnl`, `volume`.
+- **Errors raise `PolymarketAPIError`** instead of printing and returning `[]` / `None`.
+- **`get_current_positions_for_user`**: `market` → `condition_id`; `redeemable` / `mergeable` →
+  `status`; sort fields are now CURRENT_VALUE, PRICE, TOKENS, UNREALIZED_PNL, REALIZED_PNL, TOTAL_PNL,
+  TIMESTAMP.
+- **`get_leaderboards(single_user_check=...)`** returns the user's standing dict; username lookups are
+  no longer supported by the API.
+- **`get_trader_from_transaction(tx_hash, condition_id)`** now uses the Data API (the public Polygon RPC
+  it relied on is gone), so it needs the market's condition id. `web3` is no longer a dependency.
+- **Monitors**: `monitor_market_for_whales` returns a `WhaleMonitor` and `monitor_user_positions` a
+  `PositionMonitor` (a `threading.Thread`); both have `.stop()`. Position-change callbacks always get a
+  dict with `initial`, `new`, `changed` and `closed`.
+- **`list_comments`** accepts Event or Series (markets have no comment threads of their own).
+- **`Polymarket()`** no longer makes network calls or prints on construction (`check_status=True` to
+  opt in); progress goes through `logging`.
+- **`PolymarketAuth`** uses the unified SDK (`pm.api` is a `polymarket.SecureClient`, not a
+  `ClobClient`) and never prompts when run non-interactively.
 
 ---
 
@@ -354,15 +382,15 @@ print(f"Current manufacturing employment: {employment.iloc[-1].values[0]:,.0f}")
 
 ### API Documentation
 - **Kalshi**: https://trading-api.readme.io/reference/
-- **Polymarket Gamma API**: https://docs.polymarket.com/developers/gamma-markets-api/overview
-- **Polymarket Data API**: https://docs.polymarket.com/developers/data-api/overview
-- **Polymarket CLOB**: https://github.com/Polymarket/py-clob-client
+- **Polymarket Gamma API**: https://docs.polymarket.com/market-data/overview
+- **Polymarket Data API v2**: https://docs.polymarket.com/api-reference/data-api/overview
+- **Polymarket unified SDK**: https://docs.polymarket.com/migrate/clob-sdk-to-unified-sdk
 - **FRED**: https://fred.stlouisfed.org/docs/api/fred/
 
 ### Dependencies
 - `lukhed-basic-utils>=1.6.9` - Core utilities for authentication and requests
 - `fredapi>=0.5.2` - FRED API client
-- `py_clob_client>=0.34.1` - Polymarket CLOB client
+- `polymarket-client>=0.17.0` - Polymarket unified SDK (optional, `[polymarket-trading]` extra)
 - Python 3.10+
 
 ## License
