@@ -9,6 +9,7 @@ Includes wrappers for Kalshi, Polymarket, and FRED (Federal Reserve Economic Dat
 - [Features](#features)
 - [Kalshi API](#kalshi-api)
 - [Polymarket API](#polymarket-api)
+- [Polymarket NFL](#polymarket-nfl-sportsbook-style-odds)
 - [FRED API](#fred-api)
 - [Documentation & Resources](#documentation--resources)
 
@@ -22,6 +23,7 @@ pip install lukhed-markets
 
 - **Kalshi API**: Wrapper for Kalshi prediction markets with custom discovery methods
 - **Polymarket API**: Market discovery, user positions and trades, real-time whale alerts and position tracking
+- **Polymarket NFL**: Sportsbook-style NFL odds (lines, alternates, props, futures) from Polymarket's live order book
 - **FRED API**: Wrapper for Federal Reserve Economic Data with built-in analysis and plotting capabilities
 - **Automatic pagination**: Handles paginated responses seamlessly
 - **Rate limiting**: Built-in rate limiting based on API plan tiers
@@ -267,6 +269,84 @@ USDC.e into pUSD (see the [V2 migration guide](https://docs.polymarket.com/v2-mi
   opt in); progress goes through `logging`.
 - **`PolymarketAuth`** uses the unified SDK (`pm.api` is a `polymarket.SecureClient`, not a
   `ClobClient`) and never prompts when run non-interactively.
+
+---
+
+## Polymarket NFL (sportsbook-style odds)
+
+`PolymarketNFL` presents Polymarket's NFL markets the way a sportsbook API does: games with teams,
+kickoff, status and live score; moneylines, spreads and totals with main and alternate lines for the game,
+halves and quarters; team totals; player props; and futures. Every outcome is priced as American and
+decimal odds from the live order book, including Polymarket's taker fee, and every market reports its hold.
+
+```python
+from lukhed_markets.polymarket_nfl import PolymarketNFL
+from lukhed_markets.polymarket_sportsbook import odds_to_rows
+
+nfl = PolymarketNFL()
+
+# This week's board: main moneyline, spread and total for every game
+board = nfl.get_week_odds()
+for game in board:
+    for market in game['markets']:
+        print(game['title'], market['key'],
+              [(o['name'], o['point'], o['odds']['american']) for o in market['outcomes']])
+
+# One game, every market and period, main and alternate lines
+game = nfl.get_games(team='KC', status=('scheduled', 'live'))[0]
+odds = nfl.get_odds(game, markets='all', periods='all', lines='all')
+
+# Player props and futures
+props = nfl.get_props(game, prop_types=['passing_yards', 'anytime_touchdowns'])
+champion = nfl.get_super_bowl_odds()
+
+# Flat rows for pandas
+rows = odds_to_rows(board)
+```
+
+How prices work:
+- **Odds** come from the best ask, the price you would pay to back that side right now, plus Polymarket's
+  taker fee (`include_fees=False` to leave it out). `bid`, `ask` and `mid` are included on every outcome.
+- **Live by default**: prices are refreshed from the order book in batched requests, because Gamma's market
+  data can be up to 5 minutes old. Pass `live=False` to use the cached prices.
+- **Main line**: the liquid line Polymarket features before kickoff, otherwise the liquid line closest to
+  even odds (in play, the featured line is ignored because it goes stale). `lines='alt'` or `'all'`
+  returns the alternates.
+- **`liquid`**: whether a market has a real two-sided book (bid above 1¢, ask below 99¢, within 10¢ of
+  each other). Thin lines still return odds, but no one is really offering them.
+
+### Player props
+
+Polymarket posts props for the current week's games: passing, rushing and receiving yards, receptions,
+completions, attempts, passing TDs, longest reception, anytime / 2+ / first / team-first touchdown. Each
+stat is a ladder of lines (e.g. passing yards 149.5, 174.5, ... 349.5) rather than a single line.
+
+```python
+# Who has props, with team and opponent
+players = nfl.get_players(team='KC')
+
+# A player page: every stat's ladder, main line and market-implied median.
+# Names match loosely ('Mahomes', 'pat mahomes'); ambiguous names raise with the candidates.
+mahomes = nfl.get_player_props('Mahomes')
+for prop in mahomes['props']:
+    print(prop['type'], prop['main_line'], prop['implied_median'])
+    for line in prop['lines']:
+        over, under = line['outcomes']
+        print('  ', line['line'], over['odds']['american'], under['odds']['american'], line['probability'])
+
+# Screen one prop type across every game (one batched price request for the whole week)
+rushing = nfl.get_props_board(prop_types='rushing_yards')
+```
+
+- **`implied_median`** is where the ladder's Over probability crosses 50%, interpolated between liquid
+  lines: the market's projection for the stat.
+- **`probability`** on each line is the order book midpoint for Over/Yes (a vig-free estimate), and is
+  None for thin lines, where a midpoint means nothing.
+- **Settlement differs from most sportsbooks**: if a player is inactive, Polymarket settles the prop as
+  Under/No instead of voiding it.
+
+`PolymarketSportsbook('nba')` (or `'mlb'`, `'nhl'`, `'cfb'`, ...) gives the same interface for other leagues.
+See [example_nfl_odds.py](example_nfl_odds.py) for a printed odds board, player page and props screen.
 
 ---
 
