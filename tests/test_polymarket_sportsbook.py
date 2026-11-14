@@ -249,3 +249,104 @@ def test_futures_and_future_odds():
     odds = nfl.get_super_bowl_odds()
     assert [s['name'] for s in odds['selections']] == ['Kansas City Chiefs', 'Carolina Panthers']
     assert odds['selections'][0]['odds']['american'] == price_to_american(effective_price(0.2, 0.03))
+
+
+###############################
+# Player props
+###############################
+from lukhed_markets.polymarket_sportsbook import _implied_median, _match_names, _name_key, build_prop_ladders  # noqa: E402
+
+
+def props_fixture():
+    game = game_event([])
+    props = {'slug': 'nfl-den-car-2026-11-08-player-props', 'markets': [
+        market('passing_yards', ['Over', 'Under'], ['y1', 'y1n'], line=174.5, title='Bo Nix: Passing Yards O/U 174.5'),
+        market('passing_yards', ['Over', 'Under'], ['y2', 'y2n'], line=199.5, title='Bo Nix: Passing Yards O/U 199.5'),
+        market('passing_yards', ['Over', 'Under'], ['y3', 'y3n'], line=224.5, title='Bo Nix: Passing Yards O/U 224.5'),
+        market('passing_yards', ['Over', 'Under'], ['y4', 'y4n'], line=249.5, title='Bo Nix: Passing Yards O/U 249.5'),
+        market('team_first_touchdowns', ['Yes', 'No'], ['t1', 't1n'], title='Bo Nix: Team First TD (Denver Broncos)'),
+        market('receptions', ['Over', 'Under'], ['r1', 'r1n'], line=3.5, title='Tetairoa McMillan: Receptions O/U 3.5'),
+        market('team_first_touchdowns', ['Yes', 'No'], ['t2', 't2n'],
+               title='Tetairoa McMillan: Team First TD (Carolina Panthers)'),
+        market('receptions', ['Over', 'Under'], ['r2', 'r2n'], line=2.5, title='Amon-Ra St. Brown Jr.: Receptions O/U 2.5'),
+    ]}
+    prices = {
+        'y1': {'bid': 0.80, 'ask': 0.82},   # P(over 174.5) ~ 81%
+        'y2': {'bid': 0.01, 'ask': 0.99},   # dead book: must not count as 50%
+        'y3': {'bid': 0.40, 'ask': 0.42},   # P(over 224.5) ~ 41%
+        'y4': {'bid': 0.01, 'ask': 0.30},   # dust bid: thin
+        'r1': {'bid': 0.55, 'ask': 0.57},
+    }
+    return FakePolymarket([game, props], prices=prices)
+
+
+def test_name_matching():
+    names = ['Patrick Mahomes', 'Josh Allen', 'Keenan Allen', 'Amon-Ra St. Brown Jr.']
+    assert _name_key('Amon-Ra St. Brown Jr.') == 'amon ra st brown'
+    assert _match_names('mahomes', names) == ['Patrick Mahomes']
+    assert _match_names('pat mahomes', names) == ['Patrick Mahomes']
+    assert _match_names('amon-ra st brown', names) == ['Amon-Ra St. Brown Jr.']
+    assert _match_names('Allen', names) == ['Josh Allen', 'Keenan Allen']
+    assert _match_names('Josh Allen', names) == ['Josh Allen']
+
+
+def test_players_listing_with_teams():
+    nfl = PolymarketNFL(client=props_fixture())
+    players = nfl.get_players()
+    by_name = {p['player']: p for p in players}
+    assert by_name['Bo Nix']['team'] == 'Broncos' and by_name['Bo Nix']['opponent'] == 'Panthers'
+    assert by_name['Tetairoa McMillan']['team'] == 'Panthers'
+    assert by_name['Amon-Ra St. Brown Jr.']['team'] is None  # no Team First TD market to read it from
+    assert by_name['Bo Nix']['prop_types'] == ['passing_yards', 'team_first_touchdowns']
+    assert [p['player'] for p in nfl.get_players(team='CAR')] == ['Tetairoa McMillan']
+    assert nfl.get_players(week=10) == []
+
+
+def test_player_props_ladder_main_line_and_median():
+    fake = props_fixture()
+    page = PolymarketNFL(client=fake).get_player_props('nix')
+    assert (page['player'], page['team'], page['opponent']) == ('Bo Nix', 'Broncos', 'Panthers')
+    yards = next(p for p in page['props'] if p['type'] == 'passing_yards')
+    assert [r['line'] for r in yards['lines']] == [174.5, 199.5, 224.5, 249.5]
+    assert [r['liquid'] for r in yards['lines']] == [True, False, True, False]
+    assert yards['lines'][1]['probability'] is None  # 1c/99c book is not a 50% line
+    assert yards['main_line'] == 224.5               # liquid line closest to even
+    # Interpolate between 174.5 (81%) and 224.5 (41%): 50% at 174.5 + 31/40 * 50
+    assert yards['implied_median'] == pytest.approx(213.25)
+    # Only Bo Nix's markets were priced, one token per binary market
+    assert sorted(fake.price_calls[-1]) == ['t1', 'y1', 'y2', 'y3', 'y4']
+
+
+def test_player_props_errors_on_unknown_or_ambiguous_names():
+    nfl = PolymarketNFL(client=props_fixture())
+    with pytest.raises(ValueError, match='No player props'):
+        nfl.get_player_props('Mahomes')
+    with pytest.raises(ValueError, match='several players'):
+        nfl.get_player_props('b')  # Bo Nix and Amon-Ra St. Brown
+
+
+def test_props_board_filters_and_labels_teams():
+    nfl = PolymarketNFL(client=props_fixture())
+    board = nfl.get_props_board(prop_types='receptions')
+    props = board[0]['props']
+    assert [(p['player'], p['team'], p['line']) for p in props] == [
+        ('Amon-Ra St. Brown Jr.', None, 2.5), ('Tetairoa McMillan', 'Panthers', 3.5)]
+    only = nfl.get_props_board(players='mcmillan')[0]['props']
+    assert {p['player'] for p in only} == {'Tetairoa McMillan'}
+    assert nfl.get_props_board(team='DEN', prop_types='receptions') == []
+
+
+def test_implied_median_needs_both_sides_of_fifty():
+    rung = lambda line, p: {'line': line, 'probability': p, 'liquid': True}
+    assert _implied_median([rung(1.5, 0.7), rung(2.5, 0.3)]) == 2.0
+    assert _implied_median([rung(1.5, 0.7), rung(2.5, 0.6)]) is None
+    assert _implied_median([rung(1.5, 0.5)]) == 1.5
+
+
+def test_mirrored_pricing_for_second_outcome():
+    fake = props_fixture()
+    board = PolymarketNFL(client=fake).get_props_board(players='McMillan', prop_types='receptions')
+    over, under = board[0]['props'][0]['outcomes']
+    assert (over['bid'], over['ask']) == (0.55, 0.57)
+    assert (under['bid'], under['ask']) == pytest.approx((0.43, 0.45))
+    assert 'r1n' not in fake.price_calls[-1]

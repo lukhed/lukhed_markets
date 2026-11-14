@@ -18,6 +18,7 @@ This module is league-agnostic. See polymarket_nfl.PolymarketNFL for NFL-specifi
 import json
 import logging
 import re
+import unicodedata
 from datetime import datetime, timezone
 
 from .polymarket import Polymarket
@@ -206,17 +207,14 @@ class PolymarketSportsbook:
         Raw Gamma events for the league's games (with their markets), one per game. Excludes companion
         player-market events (see get_props) and futures.
         """
+        return _games_from(self._series_events(include_closed))
+
+    def _series_events(self, include_closed=False):
+        """Every raw event in the league's series: games and their companion events."""
         events = []
         for series_id in self.series_ids:
             events.extend(self.pm.get_events(series_id=series_id, include_closed=include_closed, active_only=False))
-        games = {}
-        for event in events:
-            if not event.get('gameId') or _is_companion(event):
-                continue
-            current = games.get(event['gameId'])
-            if current is None or len(str(event.get('slug', ''))) < len(str(current.get('slug', ''))):
-                games[event['gameId']] = event
-        return list(games.values())
+        return events
 
     def get_games(self, team=None, status=None, start_after=None, start_before=None, include_closed=False):
         """
@@ -386,12 +384,15 @@ class PolymarketSportsbook:
         """
         Gets player props for a game, from its companion player-props and first-TD-scorer events.
 
+        Note: Polymarket settles a prop on an inactive player as Under/No rather than voiding it.
+
         Parameters
         ----------
         game : dict or str
             A game from get_games(), an event slug or an event id
         players : str or list, optional
-            Only these players (case-insensitive, matched on full name), by default all
+            Only these players. Names match loosely: case, accents, punctuation and suffixes like 'Jr.' are
+            ignored, and a last name or partial name ('mahomes', 'pat mahomes') matches. By default all.
         prop_types : str or list, optional
             e.g. 'passing_yards', 'receiving_yards', 'anytime_touchdowns', by default all
         lines : str, optional
@@ -402,26 +403,204 @@ class PolymarketSportsbook:
         Returns
         -------
         dict
-            The game dict plus 'props': markets as in get_odds(), each with a 'player'. An empty list if
-            the game has no props event.
+            The game dict plus 'props': markets as in get_odds(), each with 'player' and 'team'. An empty
+            list if the game has no props.
         """
         event = self._game_event(game)
-        game_info = self.summarize_game(event)
-        raw_markets = []
-        for suffix in COMPANION_SUFFIXES:
-            companion = self.pm.get_event_by_slug(str(event.get('slug')) + suffix)
-            if companion:
-                raw_markets.extend(companion.get('markets', []))
+        fetched = (self.pm.get_event_by_slug(str(event.get('slug')) + suffix) for suffix in COMPANION_SUFFIXES)
+        companions = {event.get('slug'): [c for c in fetched if c]}
+        board = self._props_for([event], companions, players=players, prop_types=prop_types, lines=lines,
+                                live=live, include_closed_markets=include_closed_markets)
+        return board[0]
 
-        wanted = {p.lower() for p in _as_tuple(players, ())}
-        props = self._build_markets(raw_markets, _as_tuple(prop_types), ('game',), lines, live,
-                                    include_closed_markets, teams=event.get('teams') or [], props=True,
-                                    subject_filter=(lambda s: s and s.lower() in wanted) if wanted else None,
-                                    in_play=game_info['status'] == 'live')
-        for market in props:
-            market['player'] = market.pop('subject')
-        game_info['props'] = props
-        return game_info
+    ###############################
+    # Player props
+    ###############################
+    def get_props_board(self, games=None, prop_types=None, players=None, teams=None, lines='main', live=True,
+                        status=('scheduled', 'live'), game_filter=None, include_closed_markets=False):
+        """
+        Player props across many games at once, e.g. every main passing-yards line this week. All games are
+        priced in a few batched order book requests.
+
+        Parameters
+        ----------
+        games : list, optional
+            Games from get_games() (or slugs). By default every game matching status and game_filter.
+        prop_types : str or list, optional
+            e.g. 'passing_yards', 'anytime_touchdowns', by default all
+        players : str or list, optional
+            Only these players (loose name matching, see get_props), by default all
+        teams : str or list, optional
+            Only players on these teams (abbreviation, nickname or name), by default all
+        lines : str, optional
+            'main', 'alt' or 'all', by default 'main'
+        live : bool, optional
+            Refresh prices from the order book, by default True
+        status : str or list, optional
+            Game statuses to include when games isn't given, by default scheduled and live
+        game_filter : callable, optional
+            Extra filter on game dicts from get_games(), e.g. lambda g: g['week'] == 9
+
+        Returns
+        -------
+        list
+            One dict per game (as get_props()), including only games that have matching props.
+        """
+        events, companions = self._props_events(games, status, game_filter)
+        board = self._props_for(events, companions, players=players, prop_types=prop_types, teams=teams,
+                                lines=lines, live=live, include_closed_markets=include_closed_markets)
+        return [game for game in board if game['props']]
+
+    def get_players(self, games=None, teams=None, status=('scheduled', 'live'), game_filter=None):
+        """
+        Lists players with props, without fetching prices.
+
+        Returns
+        -------
+        list
+            Dicts with player, team, opponent, game (title), slug, start_time and prop_types, sorted by
+            kickoff, team and name.
+        """
+        events, companions = self._props_events(games, status, game_filter)
+        board = self._props_for(events, companions, teams=teams, lines='all', price=False)
+        players = {}
+        for game in board:
+            for prop in game['props']:
+                entry = players.setdefault((game['slug'], prop['player']), {
+                    'player': prop['player'],
+                    'team': prop['team'],
+                    'opponent': _opponent(prop['team'], game),
+                    'game': game['title'],
+                    'slug': game['slug'],
+                    'start_time': game['start_time'],
+                    'prop_types': set(),
+                })
+                entry['prop_types'].add(prop['type'])
+        far_future = datetime.max.replace(tzinfo=timezone.utc)
+        result = sorted(players.values(),
+                        key=lambda p: (p['start_time'] or far_future, p['team'] or '', p['player'] or ''))
+        for entry in result:
+            entry['prop_types'] = sorted(entry['prop_types'])
+        return result
+
+    def get_player_props(self, player, games=None, prop_types=None, live=True, status=('scheduled', 'live'),
+                         game_filter=None, include_closed_markets=False):
+        """
+        Every prop for one player, organized like a sportsbook player page: for each stat, the ladder of
+        lines with Over/Under (or Yes/No) odds, the main line, and the market-implied median.
+
+        Parameters
+        ----------
+        player : str
+            Player name. Loose matching: 'Mahomes', 'pat mahomes' and 'Patrick Mahomes' all work. Raises
+            ValueError if the name is unknown or ambiguous (the message lists the candidates).
+        games : list, optional
+            Games to search, by default every scheduled or live game
+        prop_types : str or list, optional
+            Only these prop types, by default all
+        live : bool, optional
+            Refresh prices from the order book, by default True
+
+        Returns
+        -------
+        dict
+            player, team, opponent, game (the game dict) and 'props': one entry per prop type with type,
+            key, main_line, implied_median and 'lines' (line, is_main, liquid, probability, hold, outcomes).
+            probability is the order book midpoint for Over/Yes, a vig-free estimate (None when the line
+            is illiquid). implied_median is where the ladder crosses 50%: the market's projection.
+        """
+        events, companions = self._props_events(games, status, game_filter)
+        board = self._props_for(events, companions, prop_types=prop_types, lines='all', price=False,
+                                include_closed_markets=include_closed_markets)
+        names = sorted({prop['player'] for game in board for prop in game['props'] if prop['player']})
+        name = _match_player(player, names)
+
+        game = next(g for g in board if any(p['player'] == name for p in g['props']))
+        props = [p for p in game['props'] if p['player'] == name]
+        self._price_markets(props, live)
+        self._finalize(props, 'all', in_play=game['status'] == 'live')
+
+        team = props[0]['team'] if props else None
+        game = {k: v for k, v in game.items() if k != 'props'}
+        return {
+            'player': name,
+            'team': team,
+            'opponent': _opponent(team, game),
+            'game': game,
+            'props': build_prop_ladders(props),
+        }
+
+    def _props_events(self, games, status, game_filter):
+        """Game events to search for props, plus their companion events keyed by game slug."""
+        events = self._series_events()
+        companions = {}
+        for event in events:
+            base = _companion_base(event)
+            if base:
+                companions.setdefault(base, []).append(event)
+
+        if games is None:
+            statuses = set(_as_tuple(status, ()))
+            selected = []
+            for event in _games_from(events):
+                summary = self.summarize_game(event)
+                if statuses and summary['status'] not in statuses:
+                    continue
+                if game_filter and not game_filter(summary):
+                    continue
+                selected.append(event)
+            return selected, companions
+
+        selected = self._events_for(games, status)
+        for event in selected:
+            slug = event.get('slug')
+            if slug not in companions:
+                fetched = (self.pm.get_event_by_slug(str(slug) + suffix) for suffix in COMPANION_SUFFIXES)
+                companions[slug] = [c for c in fetched if c]
+        return selected, companions
+
+    def _props_for(self, events, companions, players=None, prop_types=None, teams=None, lines='main', live=True,
+                   include_closed_markets=False, price=True):
+        """Builds props for several games, pricing them together in one batch."""
+        team_filter = None
+        if teams is not None:
+            wanted = [self.find_team(t) for t in _as_tuple(teams, ())]
+            if None in wanted:
+                raise ValueError(f"Unknown team in {teams}")
+            team_filter = {t.get('alias') or t.get('name') for t in wanted}
+
+        board = []
+        for event in events:
+            game = self.summarize_game(event)
+            raw = [m for c in companions.get(event.get('slug'), []) for m in c.get('markets', [])]
+            teams_in_game = event.get('teams') or []
+            props = self._build_markets(raw, _as_tuple(prop_types), ('game',), lines, live=False,
+                                        include_closed_markets=include_closed_markets, teams=teams_in_game,
+                                        props=True, price=False)
+            # Team First TD markets name each player's team; read them from every market, so the labels
+            # work even when prop_types leaves those markets out
+            player_teams = _player_teams(raw, teams_in_game)
+            for prop in props:
+                prop['player'] = prop['subject']
+                prop['team'] = player_teams.get(_name_key(prop['player']))
+            if team_filter is not None:
+                props = [p for p in props if p['team'] in team_filter]
+            game['props'] = props
+            board.append(game)
+
+        if players is not None:
+            names = sorted({p['player'] for g in board for p in g['props'] if p['player']})
+            matched = set()
+            for query in _as_tuple(players, ()):
+                matched.update(_match_names(query, names))
+            for game in board:
+                game['props'] = [p for p in game['props'] if p['player'] in matched]
+
+        if price:
+            self._price_markets([p for g in board for p in g['props']], live)
+            for game in board:
+                self._finalize(game['props'], lines, in_play=game['status'] == 'live')
+        return board
 
     ###############################
     # Futures
@@ -646,10 +825,24 @@ class PolymarketSportsbook:
     def _price_markets(self, markets, live):
         """Fills bid/ask/mid from the live order book (when live) and computes odds and hold."""
         if live:
-            tokens = [o['token_id'] for m in markets for o in m['outcomes'] if o['token_id']]
+            # In a binary market the second outcome's book mirrors the first (a bid for one side is an
+            # ask for the other), so one token per market is enough. This halves the requests for big boards.
+            tokens = []
+            for market in markets:
+                outcomes = market['outcomes']
+                if len(outcomes) == 2 and outcomes[0]['token_id']:
+                    tokens.append(outcomes[0]['token_id'])
+                else:
+                    tokens.extend(o['token_id'] for o in outcomes if o['token_id'])
             prices = self.pm.get_prices(tokens) if tokens else {}
             for market in markets:
-                for outcome in market['outcomes']:
+                outcomes = market['outcomes']
+                if len(outcomes) == 2 and outcomes[0]['token_id'] in prices:
+                    first = prices[outcomes[0]['token_id']]
+                    outcomes[0].update(_mid(first))
+                    outcomes[1].update(_mid(_mirror(first)))
+                    continue
+                for outcome in outcomes:
                     if outcome['token_id'] in prices:
                         outcome.update(_mid(prices[outcome['token_id']]))
         for market in markets:
@@ -711,26 +904,174 @@ MAX_LIQUID_SPREAD = 0.1  # bid-ask width above which a line is treated as illiqu
 
 def _main_line_rank(market, in_play=False):
     """
-    Sort key for picking the main line among alternates: liquid lines (two-sided, bid-ask width <= 10c)
-    first, then (before the game) the line Polymarket features, then the line closest to even odds.
+    Sort key for picking the main line among alternates: liquid lines first, then (before the game) the
+    line Polymarket features, then the line closest to even odds.
+
     Liquidity comes first because an empty book quoted 1c/99c has a 50c midpoint, and the featured flag
-    can sit on a dead line.
+    can sit on a dead line. For a liquid line, "closest to even" uses the midpoint. For an illiquid one it
+    uses the real ask closest to 50c on either side, i.e. the line someone is actually offering near even
+    money.
     """
-    first = market['outcomes'][0] if market['outcomes'] else {}
+    outcomes = market['outcomes'] or [{}]
+    first = outcomes[0]
     liquid = _is_liquid(first)
-    reference = first.get('mid') if first.get('mid') is not None else first.get('ask')
     featured = market.get('featured') and not in_play
-    return (0 if liquid else 1, 0 if featured else 1, abs(reference - 0.5) if reference is not None else 1.0)
+    if liquid:
+        distance = abs(first['mid'] - 0.5)
+    else:
+        asks = [o.get('ask') for o in outcomes if o.get('ask') is not None]
+        distance = min((abs(a - 0.5) for a in asks), default=1.0)
+    return (0 if liquid else 1, 0 if featured else 1, distance)
 
 
 def _is_liquid(outcome):
-    """Two-sided book with a bid-ask width of at most MAX_LIQUID_SPREAD."""
+    """
+    A real two-sided book: a bid above 1c, an ask below 99c (1c bids and 99c asks are placeholder dust
+    orders), and a bid-ask width of at most MAX_LIQUID_SPREAD.
+    """
     bid, ask = outcome.get('bid'), outcome.get('ask')
-    return bid is not None and ask is not None and ask - bid <= MAX_LIQUID_SPREAD
+    return (bid is not None and ask is not None and bid > 0.011 and ask < 0.989
+            and ask - bid <= MAX_LIQUID_SPREAD)
 
 
 def _is_companion(event):
     return str(event.get('slug', '')).endswith(COMPANION_SUFFIXES)
+
+
+def _companion_base(event):
+    """The game slug a companion event belongs to, or None if it isn't a companion."""
+    slug = str(event.get('slug', ''))
+    for suffix in COMPANION_SUFFIXES:
+        if slug.endswith(suffix):
+            return slug[:-len(suffix)]
+    return None
+
+
+def _games_from(events):
+    """One event per game id, skipping companion and non-game events."""
+    games = {}
+    for event in events:
+        if not event.get('gameId') or _is_companion(event):
+            continue
+        current = games.get(event['gameId'])
+        if current is None or len(str(event.get('slug', ''))) < len(str(current.get('slug', ''))):
+            games[event['gameId']] = event
+    return list(games.values())
+
+
+def _mirror(prices):
+    """Bid/ask for the other side of a binary market: its bid is 1 - ask and its ask is 1 - bid."""
+    bid, ask = (prices or {}).get('bid'), (prices or {}).get('ask')
+    return {'bid': None if ask is None else round(1 - ask, 6), 'ask': None if bid is None else round(1 - bid, 6)}
+
+
+###############################
+# Player helpers
+###############################
+_NAME_SUFFIXES = {'jr', 'sr', 'ii', 'iii', 'iv', 'v'}
+_TEAM_IN_PARENS = re.compile(r'\(([^)]+)\)\s*$')
+
+
+def _name_key(name):
+    """'Amon-Ra St. Brown Jr.' -> 'amon ra st brown': no accents, punctuation, case or suffixes."""
+    text = unicodedata.normalize('NFKD', str(name or '')).encode('ascii', 'ignore').decode().lower()
+    words = re.sub(r"[^a-z0-9]+", ' ', text).split()
+    return ' '.join(w for w in words if w not in _NAME_SUFFIXES)
+
+
+def _match_names(query, names):
+    """Names matching query: an exact (normalized) match, else every query word prefixes a word of the name."""
+    key = _name_key(query)
+    exact = [n for n in names if _name_key(n) == key]
+    if exact:
+        return exact
+    words = key.split()
+    return [n for n in names
+            if words and all(any(part.startswith(w) for part in _name_key(n).split()) for w in words)]
+
+
+def _match_player(query, names):
+    matches = _match_names(query, names)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise ValueError(f"No player props found for '{query}'")
+    raise ValueError(f"'{query}' matches several players: {', '.join(matches)}")
+
+
+def _player_teams(raw_markets, teams):
+    """Player name key -> team alias, from raw 'Player: Team First TD (Full Team Name)' markets."""
+    mapping = {}
+    for raw in raw_markets:
+        title = raw.get('groupItemTitle') or raw.get('question') or ''
+        match = _TEAM_IN_PARENS.search(title)
+        if not match or ':' not in title:
+            continue
+        team_text = match.group(1).strip().lower()
+        team = next((t for t in teams if team_text in _team_names(t)), None)
+        if team:
+            mapping[_name_key(title.split(':')[0])] = team.get('alias') or team.get('name')
+    return mapping
+
+
+def _opponent(team, game):
+    if not team:
+        return None
+    for mine, theirs in (('away_team', 'home_team'), ('home_team', 'away_team')):
+        info = game.get(mine) or {}
+        if team in (info.get('alias'), info.get('name')):
+            return (game.get(theirs) or {}).get('alias')
+    return None
+
+
+def _implied_median(rungs):
+    """
+    The stat value where P(over) crosses 50%, interpolated between liquid ladder lines. None if there aren't
+    liquid lines on both sides of 50%.
+    """
+    points = sorted((r for r in rungs if r['line'] is not None and r['probability'] is not None),
+                    key=lambda r: r['line'])
+    for low, high in zip(points, points[1:]):
+        p_low, p_high = low['probability'], high['probability']
+        if p_low >= 0.5 >= p_high and p_low != p_high:
+            fraction = (p_low - 0.5) / (p_low - p_high)
+            return round(low['line'] + fraction * (high['line'] - low['line']), 2)
+    exact = [r['line'] for r in points if r['probability'] == 0.5]
+    return exact[0] if exact else None
+
+
+def build_prop_ladders(props):
+    """
+    Groups prop markets (from get_props/get_props_board with lines='all') into one ladder per player and
+    prop type, with the main line and the market-implied median.
+    """
+    groups = {}
+    for prop in props:
+        groups.setdefault((prop.get('player'), prop['type']), []).append(prop)
+    ladders = []
+    for (player, prop_type), markets in groups.items():
+        markets = sorted(markets, key=lambda m: (m['line'] is None, m['line'] or 0))
+        rungs = [{
+            'line': m['line'],
+            'is_main': m['is_main'],
+            'liquid': m['liquid'],
+            # The midpoint is only a meaningful probability when the book is tight
+            'probability': m['outcomes'][0]['mid'] if m['outcomes'] and m['liquid'] else None,
+            'hold': m['hold'],
+            'market_id': m['market_id'],
+            'outcomes': m['outcomes'],
+        } for m in markets]
+        main = next((m for m in markets if m['is_main']), None)
+        ladders.append({
+            'player': player,
+            'team': markets[0].get('team'),
+            'type': prop_type,
+            'key': markets[0]['key'],
+            'main_line': main['line'] if main else None,
+            'implied_median': _implied_median(rungs),
+            'lines': rungs,
+        })
+    return sorted(ladders, key=lambda ladder: (ladder['player'] or '', ladder['type']))
 
 
 def _team_summary(team):
@@ -785,6 +1126,7 @@ def odds_to_rows(odds):
                     'market': market['key'],
                     'period': market['period'],
                     'subject': market.get('subject') or market.get('player'),
+                    'team': market.get('team'),
                     'is_main': market['is_main'],
                     'liquid': market.get('liquid'),
                     'outcome': outcome['name'],

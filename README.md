@@ -309,13 +309,44 @@ How prices work:
   taker fee (`include_fees=False` to leave it out). `bid`, `ask` and `mid` are included on every outcome.
 - **Live by default**: prices are refreshed from the order book in batched requests, because Gamma's market
   data can be up to 5 minutes old. Pass `live=False` to use the cached prices.
-- **Main line**: before kickoff, the line Polymarket features; in play, the liquid line closest to even odds.
-  `lines='alt'` or `'all'` returns the alternates.
-- **`liquid`**: whether a market has a two-sided book within 10¢. Thin lines still return odds, but no one
-  is really offering them.
+- **Main line**: the liquid line Polymarket features before kickoff, otherwise the liquid line closest to
+  even odds (in play, the featured line is ignored because it goes stale). `lines='alt'` or `'all'`
+  returns the alternates.
+- **`liquid`**: whether a market has a real two-sided book (bid above 1¢, ask below 99¢, within 10¢ of
+  each other). Thin lines still return odds, but no one is really offering them.
+
+### Player props
+
+Polymarket posts props for the current week's games: passing, rushing and receiving yards, receptions,
+completions, attempts, passing TDs, longest reception, anytime / 2+ / first / team-first touchdown. Each
+stat is a ladder of lines (e.g. passing yards 149.5, 174.5, ... 349.5) rather than a single line.
+
+```python
+# Who has props, with team and opponent
+players = nfl.get_players(team='KC')
+
+# A player page: every stat's ladder, main line and market-implied median.
+# Names match loosely ('Mahomes', 'pat mahomes'); ambiguous names raise with the candidates.
+mahomes = nfl.get_player_props('Mahomes')
+for prop in mahomes['props']:
+    print(prop['type'], prop['main_line'], prop['implied_median'])
+    for line in prop['lines']:
+        over, under = line['outcomes']
+        print('  ', line['line'], over['odds']['american'], under['odds']['american'], line['probability'])
+
+# Screen one prop type across every game (one batched price request for the whole week)
+rushing = nfl.get_props_board(prop_types='rushing_yards')
+```
+
+- **`implied_median`** is where the ladder's Over probability crosses 50%, interpolated between liquid
+  lines: the market's projection for the stat.
+- **`probability`** on each line is the order book midpoint for Over/Yes (a vig-free estimate), and is
+  None for thin lines, where a midpoint means nothing.
+- **Settlement differs from most sportsbooks**: if a player is inactive, Polymarket settles the prop as
+  Under/No instead of voiding it.
 
 `PolymarketSportsbook('nba')` (or `'mlb'`, `'nhl'`, `'cfb'`, ...) gives the same interface for other leagues.
-See [example_nfl_odds.py](example_nfl_odds.py) for a printed odds board.
+See [example_nfl_odds.py](example_nfl_odds.py) for a printed odds board, player page and props screen.
 
 ---
 

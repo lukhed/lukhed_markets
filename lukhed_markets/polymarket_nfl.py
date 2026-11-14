@@ -12,6 +12,11 @@ chiefs = nfl.get_games(team='KC', week=week)[0]
 nfl.get_odds(chiefs, markets='all', periods='all', lines='all')   # every line, every period
 nfl.get_props(chiefs, prop_types='passing_yards')
 nfl.get_super_bowl_odds()
+
+# Player props
+nfl.get_players(team='KC')                                 # who has props, and which
+mahomes = nfl.get_player_props('Mahomes')                  # every stat: ladder, main line, implied median
+nfl.get_props_board(prop_types='passing_yards')            # every QB's main passing-yards line this week
 """
 from .polymarket_sportsbook import PolymarketSportsbook, GAME_LINES
 
@@ -94,6 +99,59 @@ class PolymarketNFL(PolymarketSportsbook):
     def get_mvp_odds(self, live=True):
         """Odds for each player to win MVP."""
         return self._future_by_title(('mvp',), live)
+
+    ###############################
+    # Player props (week-aware)
+    ###############################
+    def get_players(self, week=None, team=None, games=None, status=('scheduled', 'live')):
+        """
+        Lists players with props (Polymarket posts them for the current week's games).
+
+        Parameters
+        ----------
+        week : int, optional
+            Only this week, by default every scheduled or live game
+        team : str or list, optional
+            Only players on this team (abbreviation, nickname or name)
+
+        Returns
+        -------
+        list
+            Dicts with player, team, opponent, game, slug, start_time and prop_types
+        """
+        return super().get_players(games=games, teams=team, status=status, game_filter=self._week_filter(week))
+
+    def get_player_props(self, player, week=None, prop_types=None, live=True, games=None,
+                         status=('scheduled', 'live'), include_closed_markets=False):
+        """
+        Every prop for one player: for each stat, the ladder of lines with Over/Under (or Yes/No) odds, the
+        main line, and the market-implied median. See PolymarketSportsbook.get_player_props.
+
+        Example
+        -------
+        mahomes = nfl.get_player_props('Mahomes')
+        for prop in mahomes['props']:
+            print(prop['type'], prop['main_line'], prop['implied_median'])
+        """
+        return super().get_player_props(player, games=games, prop_types=prop_types, live=live, status=status,
+                                        game_filter=self._week_filter(week),
+                                        include_closed_markets=include_closed_markets)
+
+    def get_props_board(self, week=None, prop_types=None, players=None, team=None, lines='main', live=True,
+                        games=None, status=('scheduled', 'live'), include_closed_markets=False):
+        """
+        Player props across every game, e.g. nfl.get_props_board(prop_types='rushing_yards'). See
+        PolymarketSportsbook.get_props_board.
+        """
+        return super().get_props_board(games=games, prop_types=prop_types, players=players, teams=team, lines=lines,
+                                       live=live, status=status, game_filter=self._week_filter(week),
+                                       include_closed_markets=include_closed_markets)
+
+    @staticmethod
+    def _week_filter(week):
+        if week is None:
+            return None
+        return lambda game: game['week'] is not None and int(game['week']) == int(week)
 
     def _future_by_title(self, keywords, live):
         futures = [f for f in self.get_futures() if all(k in f['title'].lower() for k in keywords)]
